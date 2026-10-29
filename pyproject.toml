@@ -1,0 +1,38 @@
+[project]
+name = "finalproject-medvedev-m26-555"
+version = "0.1.0"
+description = "ValutaTrade Hub: currency wallet simulator with exchange rates parser"
+readme = "README.md"
+authors = [
+    { name = "Mikhail Medvedev", email = "zenseo.lab@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "prettytable>=3.18.0",
+    "requests>=2.34.2",
+]
+
+[project.scripts]
+project = "main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["valutatrade_hub", "main.py"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = ["venv", ".venv", "dist", "__pycache__", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]

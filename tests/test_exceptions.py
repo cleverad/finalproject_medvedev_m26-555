@@ -34,8 +34,10 @@ from valutatrade_hub.core.exceptions import (
         (InvalidPasswordError(), "Неверный пароль"),
         (
             WalletNotFoundError(code="BTC"),
-            "У вас нет кошелька 'BTC'. Добавьте валюту: она создаётся "
-            "автоматически при первой покупке.",
+            (
+                "У вас нет кошелька 'BTC'. Добавьте валюту: она создаётся "
+                "автоматически при первой покупке."
+            ),
         ),
         (
             RateNotAvailableError(from_code="BTC", to_code="USD"),

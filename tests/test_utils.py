@@ -44,17 +44,21 @@ class TestValidation:
             utils.normalize_username(name)
 
     def test_username_must_be_a_string(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(TypeError, match="NoneType"):
             utils.normalize_username(None)
 
     @pytest.mark.parametrize("password", ["1234", "longer password", " 1234 "])
     def test_password_is_stripped(self, password):
         assert utils.normalize_password(password) == password.strip()
 
-    @pytest.mark.parametrize("password", ["", "123", "   ", " ab ", "    ", None])
+    @pytest.mark.parametrize("password", ["", "123", "   ", " ab ", "    "])
     def test_short_password_is_rejected(self, password):
         with pytest.raises(ValueError, match="не короче 4 символов"):
             utils.normalize_password(password)
+
+    def test_password_must_be_a_string(self):
+        with pytest.raises(TypeError, match="int"):
+            utils.normalize_password(1234)
 
     def test_inner_spaces_are_kept(self):
         assert utils.normalize_password(" correct horse ") == "correct horse"

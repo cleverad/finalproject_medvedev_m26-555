@@ -7,7 +7,7 @@
 import os
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 __all__ = ["DEFAULTS", "SettingsLoader"]
 
@@ -48,7 +48,7 @@ class SettingsLoader:
 
     _instance: "SettingsLoader | None" = None
 
-    def __new__(cls) -> "SettingsLoader":
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance.reload()

@@ -70,8 +70,10 @@ class TestCommands:
             capsys,
         )
         assert out.splitlines() == [
-            "Пользователь 'alice' зарегистрирован (id=1). "
-            "Войдите: login --username alice --password ****",
+            (
+                "Пользователь 'alice' зарегистрирован (id=1). "
+                "Войдите: login --username alice --password ****"
+            ),
             "Вы вошли как 'alice'",
         ]
 
@@ -135,7 +137,7 @@ class TestCommands:
 
     def test_help_lists_every_command(self, workdir, capsys):
         out = run_lines(["help"], capsys)
-        for name, command in COMMANDS.items():
+        for command in COMMANDS.values():
             assert command.usage in out
         assert run_lines(["help nothing"], capsys).startswith(
             interface.MSG_UNKNOWN_COMMAND.format(name="nothing")

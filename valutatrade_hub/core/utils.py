@@ -14,9 +14,9 @@ __all__ = [
     "format_utc",
     "hash_password",
     "make_salt",
-    "parse_utc",
     "normalize_password",
     "normalize_username",
+    "parse_utc",
     "strip_password",
     "utc_now",
     "verify_password",
@@ -31,6 +31,7 @@ UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 MSG_EMPTY_USERNAME = "Имя пользователя не может быть пустым"
 MSG_SHORT_PASSWORD = f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов"
 MSG_NAIVE_DATETIME = "Время без часового пояса недопустимо, ожидается UTC"
+MSG_NOT_A_STRING = "Ожидалась строка, получено {type_name}"
 
 
 def make_salt() -> str:
@@ -59,9 +60,12 @@ def normalize_username(username: object) -> str:
     """Вернуть имя пользователя без краевых пробелов.
 
     Raises:
-        ValueError: если имя не строка или после очистки пустое.
+        TypeError: если имя не строка.
+        ValueError: если имя после очистки пустое.
     """
-    if not isinstance(username, str) or not username.strip():
+    if not isinstance(username, str):
+        raise TypeError(MSG_NOT_A_STRING.format(type_name=type(username).__name__))
+    if not username.strip():
         raise ValueError(MSG_EMPTY_USERNAME)
     return username.strip()
 
@@ -79,10 +83,11 @@ def normalize_password(password: object) -> str:
     """Вернуть пароль без краевых пробелов, если он достаточно длинный.
 
     Raises:
-        ValueError: если пароль не строка или после очистки короче MIN_PASSWORD_LENGTH.
+        TypeError: если пароль не строка.
+        ValueError: если пароль после очистки короче MIN_PASSWORD_LENGTH.
     """
     if not isinstance(password, str):
-        raise ValueError(MSG_SHORT_PASSWORD)
+        raise TypeError(MSG_NOT_A_STRING.format(type_name=type(password).__name__))
     password = strip_password(password)
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(MSG_SHORT_PASSWORD)

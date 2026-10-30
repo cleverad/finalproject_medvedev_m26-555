@@ -9,7 +9,7 @@ import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from valutatrade_hub.core.exceptions import StorageError
 from valutatrade_hub.core.models import User
@@ -55,7 +55,7 @@ class DatabaseManager:
 
     _instance: "DatabaseManager | None" = None
 
-    def __new__(cls) -> "DatabaseManager":
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._settings = SettingsLoader()
@@ -86,7 +86,7 @@ class DatabaseManager:
             handle, temp_name = tempfile.mkstemp(dir=path.parent, suffix=TEMP_SUFFIX)
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
                 json.dump(data, stream, ensure_ascii=False, indent=JSON_INDENT)
-            os.replace(temp_name, path)
+            Path(temp_name).replace(path)
         except OSError as error:
             raise StorageError(path=path, reason=error.strerror) from error
         self._forget(path)

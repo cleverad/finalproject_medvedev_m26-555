@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -53,7 +52,7 @@ class TestJsonFiles:
         path = workdir / "data" / "x.json"
         db.write_json(path, [1])
         db.write_json(path, [2])
-        assert os.listdir(path.parent) == ["x.json"]
+        assert [entry.name for entry in path.parent.iterdir()] == ["x.json"]
 
     def test_write_invalidates_cache(self, workdir):
         db = DatabaseManager()

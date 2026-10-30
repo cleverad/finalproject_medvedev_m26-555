@@ -1,19 +1,39 @@
 """Модели ядра: пользователь, кошелёк, портфель, курс."""
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Self
 
 from valutatrade_hub.core import utils
-from valutatrade_hub.core.currencies import Currency, get_currency
-from valutatrade_hub.core.exceptions import InsufficientFundsError
+from valutatrade_hub.core.currencies import BASE_CURRENCY, Currency, get_currency
+from valutatrade_hub.core.exceptions import (
+    InsufficientFundsError,
+    RateNotAvailableError,
+)
 
-__all__ = ["User", "Wallet"]
+__all__ = ["EXCHANGE_RATES", "Rate", "RatesSnapshot", "User", "Wallet"]
 
 UserRecord = dict[str, int | str]
 WalletRecord = dict[str, float]
 
 MSG_NEGATIVE_BALANCE = "Баланс не может быть отрицательным"
+MSG_BAD_RATE = "Курс должен быть положительным числом"
+MSG_BAD_CROSS = "Кросс-курс считается через общую валюту, а не {left} и {right}"
+MSG_BAD_PAIR_KEY = "Ключ пары должен быть вида BTC_USD, получен {key!r}"
+
+PAIR_SEPARATOR = "_"
+IDENTITY_SOURCE = "identity"
+STUB_SOURCE = "stub"
+CROSS_SOURCE_SEPARATOR = "+"
+
+# Фиксированные курсы из примера ТЗ на случай, когда снимок rates.json ещё пуст.
+EXCHANGE_RATES: dict[str, float] = {
+    "EUR_USD": 1.0786,
+    "BTC_USD": 59337.21,
+    "RUB_USD": 0.01016,
+    "ETH_USD": 3720.00,
+}
 
 
 class User:
@@ -243,3 +263,149 @@ class Wallet:
         if value <= 0:
             raise ValueError(utils.MSG_AMOUNT_NOT_POSITIVE)
         return value
+
+
+@dataclass(frozen=True)
+class Rate:
+    """Курс пары: сколько to_code стоит одна единица from_code.
+
+    Значение не округляется: обратный и кросс-курс считаются из точного числа,
+    округление только при выводе.
+    """
+
+    from_code: str
+    to_code: str
+    value: Decimal
+    updated_at: datetime
+    source: str
+
+    def __post_init__(self) -> None:
+        """Проверить курс и привести время к UTC.
+
+        Raises:
+            ValueError: если курс не положительный или время без часового пояса.
+        """
+        if not self.value.is_finite() or self.value <= 0:
+            raise ValueError(MSG_BAD_RATE)
+        object.__setattr__(self, "updated_at", utils.ensure_utc(self.updated_at))
+
+    @property
+    def key(self) -> str:
+        """Ключ пары в rates.json, например BTC_USD."""
+        return f"{self.from_code}{PAIR_SEPARATOR}{self.to_code}"
+
+    def inverse(self) -> "Rate":
+        """Вернуть курс в обратную сторону с теми же временем и источником."""
+        return Rate(
+            self.to_code, self.from_code, 1 / self.value, self.updated_at, self.source
+        )
+
+    def cross(self, other: "Rate") -> "Rate":
+        """Вернуть курс from_code к other.from_code через общую валюту.
+
+        BTC_USD и EUR_USD дают BTC_EUR. Время кросс-курса берётся у более
+        старого из двух курсов, источник перечисляет оба.
+
+        Raises:
+            ValueError: если у курсов разная валюта справа.
+        """
+        if self.to_code != other.to_code:
+            raise ValueError(MSG_BAD_CROSS.format(left=self.key, right=other.key))
+        sources = [self.source]
+        if other.source != self.source:
+            sources.append(other.source)
+        return Rate(
+            self.from_code,
+            other.from_code,
+            self.value / other.value,
+            min(self.updated_at, other.updated_at),
+            CROSS_SOURCE_SEPARATOR.join(sources),
+        )
+
+    def is_fresh(self, ttl_seconds: int, now: datetime) -> bool:
+        """Проверить, моложе ли курс срока годности на момент now."""
+        return utils.ensure_utc(now) - self.updated_at <= timedelta(seconds=ttl_seconds)
+
+
+@dataclass(frozen=True)
+class RatesSnapshot:
+    """Снимок rates.json: пары X_USD по ключу и время последнего обновления."""
+
+    pairs: dict[str, Rate]
+    last_refresh: datetime | None = None
+
+    def get_rate(self, from_code: str, to_code: str) -> Rate:
+        """Вернуть курс пары, выводя обратный и кросс-курс из пар X_USD.
+
+        Raises:
+            RateNotAvailableError: если в снимке нет нужного курса к USD.
+        """
+        if from_code == to_code:
+            return Rate(
+                from_code, to_code, Decimal(1), utils.utc_now(), IDENTITY_SOURCE
+            )
+        try:
+            if to_code == BASE_CURRENCY:
+                return self._to_base(from_code)
+            if from_code == BASE_CURRENCY:
+                return self._to_base(to_code).inverse()
+            return self._to_base(from_code).cross(self._to_base(to_code))
+        except KeyError:
+            raise RateNotAvailableError(from_code=from_code, to_code=to_code) from None
+
+    def _to_base(self, code: str) -> Rate:
+        return self.pairs[f"{code}{PAIR_SEPARATOR}{BASE_CURRENCY}"]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Вернуть снимок в формате rates.json."""
+        return {
+            "pairs": {
+                rate.key: {
+                    "rate": float(rate.value),
+                    "updated_at": utils.format_utc(rate.updated_at),
+                    "source": rate.source,
+                }
+                for rate in self.pairs.values()
+            },
+            "last_refresh": (
+                None
+                if self.last_refresh is None
+                else utils.format_utc(self.last_refresh)
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Собрать снимок из rates.json.
+
+        Raises:
+            KeyError: если у пары нет курса, времени или источника.
+            ValueError: если ключ пары не вида BTC_USD или время не ISO.
+        """
+        pairs = {}
+        for key, record in data.get("pairs", {}).items():
+            from_code, separator, to_code = key.partition(PAIR_SEPARATOR)
+            if not separator or not from_code or not to_code:
+                raise ValueError(MSG_BAD_PAIR_KEY.format(key=key))
+            pairs[key] = Rate(
+                from_code,
+                to_code,
+                utils.to_decimal(record["rate"]),
+                utils.parse_utc(record["updated_at"]),
+                record["source"],
+            )
+        last_refresh = data.get("last_refresh")
+        return cls(
+            pairs, None if last_refresh is None else utils.parse_utc(last_refresh)
+        )
+
+    @classmethod
+    def stub(cls, now: datetime) -> Self:
+        """Собрать снимок из фиксированных курсов EXCHANGE_RATES."""
+        pairs = {}
+        for key, value in EXCHANGE_RATES.items():
+            from_code, _, to_code = key.partition(PAIR_SEPARATOR)
+            pairs[key] = Rate(
+                from_code, to_code, utils.to_decimal(value), now, STUB_SOURCE
+            )
+        return cls(pairs, now)

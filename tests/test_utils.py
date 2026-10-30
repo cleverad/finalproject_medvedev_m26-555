@@ -122,6 +122,21 @@ class TestFormatting:
     def test_format_mcap(self, market_cap, text):
         assert utils.format_mcap(market_cap) == text
 
+    @pytest.mark.parametrize(
+        ("value", "text"),
+        [
+            ("59337.21", "59337.21"),
+            ("3720", "3720.00"),
+            ("0.01016", "0.01016"),
+            ("0.0000168528", "0.00001685"),
+            ("1", "1.00"),
+            ("0.000000001", "0.00"),
+            ("1.0786", "1.0786"),
+        ],
+    )
+    def test_format_rate_from_the_task_examples(self, value, text):
+        assert utils.format_rate(Decimal(value)) == text
+
 
 class TestDecimal:
     @pytest.mark.parametrize(

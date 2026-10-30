@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -9,10 +9,33 @@ from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
     InsufficientFundsError,
+    RateNotAvailableError,
 )
-from valutatrade_hub.core.models import User, Wallet
+from valutatrade_hub.core.models import (
+    EXCHANGE_RATES,
+    Rate,
+    RatesSnapshot,
+    User,
+    Wallet,
+)
 
 REGISTERED_AT = datetime(2025, 10, 9, 12, 0, 0, tzinfo=UTC)
+UPDATED_AT = datetime(2025, 10, 10, 12, 0, 0, tzinfo=UTC)
+RATES_JSON = {
+    "pairs": {
+        "EUR_USD": {
+            "rate": 1.0786,
+            "updated_at": "2025-10-10T12:00:00Z",
+            "source": "ExchangeRate-API",
+        },
+        "BTC_USD": {
+            "rate": 59337.21,
+            "updated_at": "2025-10-10T12:00:00Z",
+            "source": "CoinGecko",
+        },
+    },
+    "last_refresh": "2025-10-10T12:00:01Z",
+}
 
 
 def make_user(password: str = "1234", **overrides) -> User:
@@ -242,3 +265,146 @@ class TestWallet:
     def test_from_dict_rejects_missing_balance(self):
         with pytest.raises(KeyError):
             Wallet.from_dict("USD", {})
+
+
+def btc_usd(value: str = "59337.21", **overrides) -> Rate:
+    fields = {
+        "from_code": "BTC",
+        "to_code": "USD",
+        "value": Decimal(value),
+        "updated_at": UPDATED_AT,
+        "source": "CoinGecko",
+    }
+    fields.update(overrides)
+    return Rate(**fields)
+
+
+class TestRate:
+    def test_inverse_is_computed_from_the_exact_value(self):
+        inverse = btc_usd().inverse()
+        assert (inverse.from_code, inverse.to_code) == ("USD", "BTC")
+        assert utils.format_rate(inverse.value) == "0.00001685"
+        assert utils.format_rate(inverse.inverse().value) == "59337.21"
+        assert inverse.updated_at == UPDATED_AT
+        assert inverse.source == "CoinGecko"
+
+    def test_cross_rate_takes_the_older_time_and_both_sources(self):
+        eur = Rate(
+            "EUR",
+            "USD",
+            Decimal("1.0786"),
+            UPDATED_AT - timedelta(minutes=5),
+            "ExchangeRate-API",
+        )
+        cross = btc_usd().cross(eur)
+        assert (cross.from_code, cross.to_code) == ("BTC", "EUR")
+        assert cross.value == Decimal("59337.21") / Decimal("1.0786")
+        assert cross.updated_at == eur.updated_at
+        assert cross.source == "CoinGecko+ExchangeRate-API"
+
+    def test_cross_with_same_source_names_it_once(self):
+        eth = btc_usd("3720", from_code="ETH")
+        assert btc_usd().cross(eth).source == "CoinGecko"
+
+    def test_cross_requires_a_common_currency(self):
+        with pytest.raises(ValueError, match="общую валюту"):
+            btc_usd().cross(btc_usd(to_code="EUR"))
+
+    def test_key(self):
+        assert btc_usd().key == "BTC_USD"
+
+    @pytest.mark.parametrize(
+        ("age_seconds", "fresh"), [(0, True), (299, True), (300, True), (301, False)]
+    )
+    def test_is_fresh_by_ttl(self, age_seconds, fresh):
+        now = UPDATED_AT + timedelta(seconds=age_seconds)
+        assert btc_usd().is_fresh(300, now) is fresh
+
+    def test_future_rate_counts_as_fresh(self):
+        assert btc_usd().is_fresh(300, UPDATED_AT - timedelta(days=1))
+
+    def test_is_fresh_rejects_naive_now(self):
+        with pytest.raises(ValueError, match=re.escape(utils.MSG_NAIVE_DATETIME)):
+            btc_usd().is_fresh(300, datetime(2025, 10, 10, 12, 0))
+
+    @pytest.mark.parametrize("value", ["0", "-1", "NaN", "Infinity"])
+    def test_rate_must_be_positive_and_finite(self, value):
+        with pytest.raises(ValueError, match="положительным"):
+            btc_usd(value)
+
+    def test_updated_at_is_normalized_to_utc(self):
+        moscow = datetime(2025, 10, 10, 15, 0, tzinfo=timezone(timedelta(hours=3)))
+        assert btc_usd(updated_at=moscow).updated_at == UPDATED_AT
+        with pytest.raises(ValueError, match=re.escape(utils.MSG_NAIVE_DATETIME)):
+            btc_usd(updated_at=datetime(2025, 10, 10, 12, 0))
+
+    def test_rate_is_immutable_and_compared_by_value(self):
+        rate = btc_usd()
+        with pytest.raises(AttributeError):
+            rate.value = Decimal(1)
+        assert rate == btc_usd()
+
+
+class TestRatesSnapshot:
+    def test_round_trip_with_the_task_example(self):
+        snapshot = RatesSnapshot.from_dict(RATES_JSON)
+        assert snapshot.last_refresh == UPDATED_AT + timedelta(seconds=1)
+        assert snapshot.pairs["BTC_USD"] == btc_usd()
+        assert snapshot.to_dict() == RATES_JSON
+
+    def test_empty_snapshot(self):
+        snapshot = RatesSnapshot.from_dict({})
+        assert snapshot.pairs == {}
+        assert snapshot.last_refresh is None
+        assert snapshot.to_dict() == {"pairs": {}, "last_refresh": None}
+
+    @pytest.mark.parametrize("key", ["BTCUSD", "_USD", "BTC_"])
+    def test_bad_pair_key(self, key):
+        data = {"pairs": {key: RATES_JSON["pairs"]["BTC_USD"]}}
+        with pytest.raises(ValueError, match="BTC_USD"):
+            RatesSnapshot.from_dict(data)
+
+    def test_missing_field_is_a_key_error(self):
+        with pytest.raises(KeyError):
+            RatesSnapshot.from_dict({"pairs": {"BTC_USD": {"rate": 1}}})
+
+    @pytest.mark.parametrize(
+        ("from_code", "to_code", "text", "source"),
+        [
+            ("BTC", "USD", "59337.21", "CoinGecko"),
+            ("USD", "BTC", "0.00001685", "CoinGecko"),
+            ("BTC", "EUR", "55013.17448544", "CoinGecko+ExchangeRate-API"),
+            ("EUR", "BTC", "0.00001818", "ExchangeRate-API+CoinGecko"),
+        ],
+    )
+    def test_get_rate_direct_inverse_and_cross(self, from_code, to_code, text, source):
+        rate = RatesSnapshot.from_dict(RATES_JSON).get_rate(from_code, to_code)
+        assert (rate.from_code, rate.to_code) == (from_code, to_code)
+        assert utils.format_rate(rate.value) == text
+        assert rate.source == source
+
+    def test_get_rate_identity(self, monkeypatch):
+        monkeypatch.setattr(utils, "utc_now", lambda: UPDATED_AT)
+        rate = RatesSnapshot({}).get_rate("USD", "USD")
+        assert (rate.value, rate.updated_at, rate.source) == (1, UPDATED_AT, "identity")
+        assert RatesSnapshot({}).get_rate("BTC", "BTC").value == 1
+
+    @pytest.mark.parametrize(
+        ("from_code", "to_code"), [("GBP", "USD"), ("USD", "GBP"), ("BTC", "GBP")]
+    )
+    def test_missing_rate_names_the_requested_pair(self, from_code, to_code):
+        snapshot = RatesSnapshot.from_dict(RATES_JSON)
+        with pytest.raises(RateNotAvailableError) as info:
+            snapshot.get_rate(from_code, to_code)
+        assert str(info.value) == f"Не удалось получить курс для {from_code}→{to_code}"
+
+    def test_stub_uses_the_task_rates(self):
+        snapshot = RatesSnapshot.stub(UPDATED_AT)
+        assert set(snapshot.pairs) == set(EXCHANGE_RATES)
+        rate = snapshot.get_rate("BTC", "USD")
+        assert (rate.value, rate.updated_at, rate.source) == (
+            Decimal("59337.21"),
+            UPDATED_AT,
+            "stub",
+        )
+        assert snapshot.last_refresh == UPDATED_AT

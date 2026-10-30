@@ -13,6 +13,7 @@ __all__ = [
     "MIN_PASSWORD_LENGTH",
     "ensure_utc",
     "format_mcap",
+    "format_rate",
     "format_utc",
     "hash_password",
     "make_salt",
@@ -30,6 +31,8 @@ SALT_BYTES = 8
 HASH_NAME = "sha256"
 PBKDF2_ITERATIONS = 100_000
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+RATE_MAX_DECIMALS = 8
+RATE_MIN_DECIMALS = 2
 
 MSG_EMPTY_USERNAME = "Имя пользователя не может быть пустым"
 MSG_SHORT_PASSWORD = f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов"
@@ -169,3 +172,14 @@ def format_mcap(market_cap: float) -> str:
     """
     mantissa, exponent = f"{market_cap:.2e}".split("e")
     return f"{mantissa}e{int(exponent)}"
+
+
+def format_rate(value: Decimal) -> str:
+    """Записать курс не длиннее 8 знаков после запятой и не короче 2.
+
+    Хвостовые нули убираются: 59337.21, 3720.00, 0.01016, 0.00001685.
+    """
+    text = f"{value:.{RATE_MAX_DECIMALS}f}"
+    whole, fraction = text.split(".")
+    fraction = fraction.rstrip("0").ljust(RATE_MIN_DECIMALS, "0")
+    return f"{whole}.{fraction}"

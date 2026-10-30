@@ -28,11 +28,22 @@ target-version = "py312"
 exclude = ["venv", ".venv", "dist", "__pycache__", "docs"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
-ignore = []
+extend-select = ["E", "I", "B", "UP", "SIM", "C4", "PTH", "RET", "N"]
 
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.3",
 ]
+
+[tool.valutatrade]
+data_dir = "data"
+log_dir = "logs"
+log_level = "INFO"
+rates_ttl_seconds = 300
+default_base_currency = "USD"
+start_balance_usd = 10000
+scheduler_interval_seconds = 300
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

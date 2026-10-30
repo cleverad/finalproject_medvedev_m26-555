@@ -1,4 +1,4 @@
-.PHONY: install run build package-install lint fmt check fix
+.PHONY: install run build package-install lint fmt check fix test
 
 install:
 	uv sync
@@ -26,3 +26,6 @@ check:
 fix:
 	uv run ruff check --fix .
 	uv run ruff format .
+
+test:
+	uv run pytest -q

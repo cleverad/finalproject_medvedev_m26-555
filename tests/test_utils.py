@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -63,6 +64,19 @@ class TestValidation:
     def test_inner_spaces_are_kept(self):
         assert utils.normalize_password(" correct horse ") == "correct horse"
 
+    @pytest.mark.parametrize("code", ["btc", " BTC ", "Btc"])
+    def test_currency_code_is_stripped_and_uppercased(self, code):
+        assert utils.normalize_currency_code(code) == "BTC"
+
+    @pytest.mark.parametrize("code", ["", "   "])
+    def test_empty_currency_code_is_rejected(self, code):
+        with pytest.raises(ValueError, match="не может быть пустым"):
+            utils.normalize_currency_code(code)
+
+    def test_currency_code_must_be_a_string(self):
+        with pytest.raises(TypeError, match="NoneType"):
+            utils.normalize_currency_code(None)
+
 
 class TestTime:
     def test_utc_now_is_aware_utc(self):
@@ -105,3 +119,62 @@ class TestTime:
     def test_round_trip(self):
         moment = datetime(2026, 10, 30, 9, 1, 37, tzinfo=UTC)
         assert utils.parse_utc(utils.format_utc(moment)) == moment
+
+
+class TestFormatting:
+    @pytest.mark.parametrize(
+        ("market_cap", "text"),
+        [
+            (1.12e12, "1.12e12"),
+            (4.5e11, "4.50e11"),
+            (123456.0, "1.23e5"),
+            (0.0, "0.00e0"),
+            (0.00123, "1.23e-3"),
+        ],
+    )
+    def test_format_mcap(self, market_cap, text):
+        assert utils.format_mcap(market_cap) == text
+
+    @pytest.mark.parametrize(
+        ("value", "text"),
+        [
+            ("59337.21", "59337.21"),
+            ("3720", "3720.00"),
+            ("0.01016", "0.01016"),
+            ("0.0000168528", "0.00001685"),
+            ("1", "1.00"),
+            ("0.000000001", "0.00"),
+            ("1.0786", "1.0786"),
+        ],
+    )
+    def test_format_rate(self, value, text):
+        assert utils.format_rate(Decimal(value)) == text
+
+
+class TestDecimal:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (1, Decimal(1)),
+            (0.1, Decimal("0.1")),
+            (1200.0, Decimal(1200)),
+            (Decimal("0.05"), Decimal("0.05")),
+            (1e-8, Decimal("0.00000001")),
+        ],
+    )
+    def test_numbers_become_exact_decimals(self, value, expected):
+        result = utils.to_decimal(value)
+        assert isinstance(result, Decimal)
+        assert result == expected
+
+    @pytest.mark.parametrize("value", [True, False, "1", None, [1]])
+    def test_non_numbers_are_a_type_error(self, value):
+        with pytest.raises(TypeError, match=type(value).__name__):
+            utils.to_decimal(value)
+
+    @pytest.mark.parametrize(
+        "value", [float("nan"), float("inf"), -float("inf"), Decimal("NaN")]
+    )
+    def test_non_finite_is_rejected(self, value):
+        with pytest.raises(ValueError, match="конечным"):
+            utils.to_decimal(value)

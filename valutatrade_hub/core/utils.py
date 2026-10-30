@@ -1,4 +1,4 @@
-"""Вспомогательные функции ядра: пароли, валидация ввода, время.
+"""Вспомогательные функции ядра: пароли, валидация ввода, время, форматирование.
 
 Все функции чистые, ошибки ввода пользователя поднимаются как ValueError.
 """
@@ -7,17 +7,22 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime
+from decimal import Decimal
 
 __all__ = [
     "MIN_PASSWORD_LENGTH",
     "ensure_utc",
+    "format_mcap",
+    "format_rate",
     "format_utc",
     "hash_password",
     "make_salt",
+    "normalize_currency_code",
     "normalize_password",
     "normalize_username",
     "parse_utc",
     "strip_password",
+    "to_decimal",
     "utc_now",
     "verify_password",
 ]
@@ -27,11 +32,17 @@ SALT_BYTES = 8
 HASH_NAME = "sha256"
 PBKDF2_ITERATIONS = 100_000
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+RATE_MAX_DECIMALS = 8
+RATE_MIN_DECIMALS = 2
 
 MSG_EMPTY_USERNAME = "Имя пользователя не может быть пустым"
 MSG_SHORT_PASSWORD = f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов"
 MSG_NAIVE_DATETIME = "Время без часового пояса недопустимо, ожидается UTC"
 MSG_NOT_A_STRING = "Ожидалась строка, получено {type_name}"
+MSG_EMPTY_CURRENCY_CODE = "Код валюты не может быть пустым"
+MSG_NOT_A_NUMBER = "Ожидалось число, получено {type_name}"
+MSG_NOT_FINITE = "Сумма должна быть конечным числом"
+MSG_AMOUNT_NOT_POSITIVE = "'amount' должен быть положительным числом"
 
 
 def make_salt() -> str:
@@ -42,8 +53,8 @@ def make_salt() -> str:
 def hash_password(password: str, salt: str) -> str:
     """Вернуть hex-хеш пароля с солью.
 
-    Используется PBKDF2 поверх SHA-256: та же пара соль плюс SHA-256, что требует
-    ТЗ, но устойчивее к перебору, чем один вызов sha256.
+    Используется PBKDF2 поверх SHA-256: та же пара соль плюс SHA-256, но
+    устойчивее к перебору, чем один вызов sha256.
     """
     digest = hashlib.pbkdf2_hmac(
         HASH_NAME, password.encode(), salt.encode(), PBKDF2_ITERATIONS
@@ -94,6 +105,45 @@ def normalize_password(password: object) -> str:
     return password
 
 
+def normalize_currency_code(code: object) -> str:
+    """Вернуть код валюты без краевых пробелов в верхнем регистре.
+
+    Проверка по реестру остаётся за get_currency, здесь только форма ввода.
+
+    Raises:
+        TypeError: если код не строка.
+        ValueError: если код после очистки пустой.
+    """
+    if not isinstance(code, str):
+        raise TypeError(MSG_NOT_A_STRING.format(type_name=type(code).__name__))
+    code = code.strip().upper()
+    if not code:
+        raise ValueError(MSG_EMPTY_CURRENCY_CODE)
+    return code
+
+
+def to_decimal(value: object) -> Decimal:
+    """Перевести число в Decimal без двоичного хвоста float.
+
+    float хранит 0.1 неточно, и Decimal(0.1) тянет этот хвост за собой. Через str
+    получается та короткая запись, которую видел пользователь. bool отвергается
+    отдельно, потому что это подкласс int.
+
+    Raises:
+        TypeError: если значение не int, float или Decimal, либо это bool.
+        ValueError: если значение NaN или бесконечность.
+    """
+    if isinstance(value, Decimal):
+        number = value
+    elif type(value) is bool or not isinstance(value, int | float):
+        raise TypeError(MSG_NOT_A_NUMBER.format(type_name=type(value).__name__))
+    else:
+        number = Decimal(str(value))
+    if not number.is_finite():
+        raise ValueError(MSG_NOT_FINITE)
+    return number
+
+
 def utc_now() -> datetime:
     """Вернуть текущее время в UTC."""
     return datetime.now(UTC)
@@ -132,3 +182,23 @@ def parse_utc(text: str) -> datetime:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return ensure_utc(moment)
+
+
+def format_mcap(market_cap: float) -> str:
+    """Записать капитализацию коротко: 1.12e12.
+
+    Формат Python даёт 1.12e+12, знак и ведущие нули показателя убираются.
+    """
+    mantissa, exponent = f"{market_cap:.2e}".split("e")
+    return f"{mantissa}e{int(exponent)}"
+
+
+def format_rate(value: Decimal) -> str:
+    """Записать курс не длиннее 8 знаков после запятой и не короче 2.
+
+    Хвостовые нули убираются: 59337.21, 3720.00, 0.01016, 0.00001685.
+    """
+    text = f"{value:.{RATE_MAX_DECIMALS}f}"
+    whole, fraction = text.split(".")
+    fraction = fraction.rstrip("0").ljust(RATE_MIN_DECIMALS, "0")
+    return f"{whole}.{fraction}"

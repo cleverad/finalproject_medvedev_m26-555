@@ -45,7 +45,7 @@ from valutatrade_hub.core.exceptions import (
         ),
     ],
 )
-def test_messages_from_the_task(error, message):
+def test_messages(error, message):
     assert str(error) == message
     assert isinstance(error, ValutaTradeError)
 

@@ -8,16 +8,24 @@ from valutatrade_hub.core.currencies import BASE_CURRENCY, get_currency
 from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
     InvalidPasswordError,
+    RateNotAvailableError,
     UsernameTakenError,
     UserNotFoundError,
 )
-from valutatrade_hub.core.models import Portfolio, PortfolioValuation, User, Wallet
+from valutatrade_hub.core.models import (
+    Portfolio,
+    PortfolioValuation,
+    Rate,
+    RatesSnapshot,
+    User,
+    Wallet,
+)
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 
 MSG_UNKNOWN_BASE = "Неизвестная базовая валюта '{code}'"
 
-__all__ = ["login", "register", "show_portfolio"]
+__all__ = ["get_rate", "login", "register", "show_portfolio"]
 
 
 def register(username: str, password: str) -> User:
@@ -82,3 +90,23 @@ def show_portfolio(
         raise ValueError(MSG_UNKNOWN_BASE.format(code=base_currency)) from None
     portfolio = db.get_portfolio(user) or Portfolio(user.user_id, user=user)
     return portfolio.get_valuation(base_currency, db.get_rates())
+
+
+def get_rate(from_code: str, to_code: str) -> Rate:
+    """Вернуть свежий курс пары по снимку rates.json.
+
+    Курс старше rates_ttl_seconds считается отсутствующим. Пока rates.json нет,
+    берётся заглушка EXCHANGE_RATES.
+
+    Raises:
+        CurrencyNotFoundError: если один из кодов не в реестре.
+        RateNotAvailableError: если курса нет в снимке или он устарел.
+    """
+    get_currency(from_code)
+    get_currency(to_code)
+    now = utils.utc_now()
+    rates = DatabaseManager().get_rates() or RatesSnapshot.stub(now)
+    rate = rates.get_rate(from_code, to_code)
+    if not rate.is_fresh(SettingsLoader().get("rates_ttl_seconds"), now):
+        raise RateNotAvailableError(from_code=from_code, to_code=to_code)
+    return rate

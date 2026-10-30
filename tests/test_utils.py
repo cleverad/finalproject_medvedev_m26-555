@@ -135,6 +135,18 @@ class TestFormatting:
     def test_format_mcap(self, market_cap, text):
         assert utils.format_mcap(market_cap) == text
 
+    def test_format_display_time(self):
+        moment = datetime(2025, 10, 9, 0, 3, 22, tzinfo=UTC)
+        assert utils.format_display_time(moment) == "2025-10-09 00:03:22 UTC"
+
+    def test_format_display_time_converts_to_utc(self):
+        moment = datetime(2025, 10, 9, 3, 3, 22, tzinfo=timezone(timedelta(hours=3)))
+        assert utils.format_display_time(moment) == "2025-10-09 00:03:22 UTC"
+
+    def test_format_display_time_rejects_naive(self):
+        with pytest.raises(ValueError, match=NAIVE):
+            utils.format_display_time(datetime(2025, 10, 9))
+
     @pytest.mark.parametrize(
         ("value", "text"),
         [

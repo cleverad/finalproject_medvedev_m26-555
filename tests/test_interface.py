@@ -1,9 +1,15 @@
 import re
+from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
 from valutatrade_hub.cli import interface
 from valutatrade_hub.cli.interface import COMMANDS, Command, Session, parse_options
+from valutatrade_hub.core import utils
+from valutatrade_hub.core.currencies import supported_codes
+from valutatrade_hub.core.models import Rate, RatesSnapshot
+from valutatrade_hub.infra.database import DatabaseManager
 
 
 def escaped(template: str, **fields) -> str:
@@ -181,6 +187,30 @@ class TestCommands:
             capsys,
         )
         assert "Неизвестная базовая валюта 'ABC'" in out
+
+    def test_get_rate_prints_rate_time_and_inverse(self, workdir, capsys, monkeypatch):
+        updated_at = datetime(2025, 10, 9, 0, 3, 22, tzinfo=UTC)
+        btc_usd = Rate("BTC", "USD", Decimal("59337.21"), updated_at, "CoinGecko")
+        DatabaseManager().save_rates(RatesSnapshot({btc_usd.key: btc_usd}, updated_at))
+        monkeypatch.setattr(utils, "utc_now", lambda: updated_at)
+        out = run_lines(["get-rate --from usd --to btc"], capsys).splitlines()
+        assert out == [
+            "Курс USD→BTC: 0.00001685 (обновлено: 2025-10-09 00:03:22 UTC)",
+            "Обратный курс BTC→USD: 59337.21",
+        ]
+
+    def test_get_rate_does_not_require_login(self, workdir, capsys):
+        out = run_lines(["get-rate --from USD --to USD"], capsys)
+        assert "Сначала выполните login" not in out
+        assert "Курс USD→USD: 1.00" in out
+
+    def test_get_rate_unknown_code_lists_supported(self, workdir, capsys):
+        out = run_lines(["get-rate --from USD --to ABC"], capsys).splitlines()
+        codes = interface.CODES_SEPARATOR.join(supported_codes())
+        assert out == [
+            "Неизвестная валюта 'ABC'",
+            interface.MSG_SUPPORTED_CODES.format(codes=codes),
+        ]
 
     def test_exit_stops_session(self, workdir, capsys):
         session = Session()

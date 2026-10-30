@@ -12,6 +12,7 @@ from decimal import Decimal
 __all__ = [
     "MIN_PASSWORD_LENGTH",
     "ensure_utc",
+    "format_display_time",
     "format_mcap",
     "format_rate",
     "format_utc",
@@ -32,6 +33,7 @@ SALT_BYTES = 8
 HASH_NAME = "sha256"
 PBKDF2_ITERATIONS = 100_000
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC"
 RATE_MAX_DECIMALS = 8
 RATE_MIN_DECIMALS = 2
 
@@ -170,6 +172,15 @@ def format_utc(moment: datetime) -> str:
         ValueError: если у момента нет часового пояса.
     """
     return ensure_utc(moment).strftime(UTC_FORMAT)
+
+
+def format_display_time(moment: datetime) -> str:
+    """Записать момент времени для вывода пользователю: 2026-10-30 09:01:37 UTC.
+
+    Raises:
+        ValueError: если у момента нет часового пояса.
+    """
+    return ensure_utc(moment).strftime(DISPLAY_TIME_FORMAT)
 
 
 def parse_utc(text: str) -> datetime:

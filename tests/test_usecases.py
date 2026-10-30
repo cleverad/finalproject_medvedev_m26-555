@@ -1,15 +1,18 @@
 import json
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
-from valutatrade_hub.core import usecases
+from valutatrade_hub.core import usecases, utils
 from valutatrade_hub.core.exceptions import (
+    CurrencyNotFoundError,
     InvalidPasswordError,
+    RateNotAvailableError,
     UsernameTakenError,
     UserNotFoundError,
 )
-from valutatrade_hub.core.models import RatesSnapshot
+from valutatrade_hub.core.models import STUB_SOURCE, RatesSnapshot
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 
@@ -89,6 +92,7 @@ class TestLogin:
             usecases.login("alice", "4321")
 
 
+UPDATED_AT = datetime(2025, 10, 10, 12, 0, 0, tzinfo=UTC)
 RATES_JSON = {
     "pairs": {
         "BTC_USD": {
@@ -153,3 +157,55 @@ class TestShowPortfolio:
         valuation = usecases.show_portfolio(alice.user_id)
         assert valuation.values == {}
         assert valuation.total == 0
+
+
+@pytest.fixture
+def rates(workdir, monkeypatch):
+    """Сохранить снимок RATES_JSON и остановить часы на моменте его обновления."""
+    DatabaseManager().save_rates(RatesSnapshot.from_dict(RATES_JSON))
+    monkeypatch.setattr(utils, "utc_now", lambda: UPDATED_AT)
+
+
+class TestGetRate:
+    def test_direct_rate_from_rates_json(self, rates):
+        rate = usecases.get_rate("BTC", "USD")
+        assert rate.value == Decimal("59300.0")
+        assert rate.updated_at == UPDATED_AT
+        assert rate.source == "CoinGecko"
+
+    def test_inverse_and_cross_are_derived(self, rates):
+        inverse = usecases.get_rate("USD", "BTC")
+        assert inverse.value == 1 / Decimal("59300.0")
+        cross = usecases.get_rate("BTC", "EUR")
+        assert cross.source == "CoinGecko+ExchangeRate-API"
+
+    def test_same_currency(self, rates):
+        assert usecases.get_rate("USD", "USD").value == 1
+
+    def test_rate_at_the_ttl_edge_is_fresh(self, rates, monkeypatch):
+        ttl = SettingsLoader().get("rates_ttl_seconds")
+        edge = UPDATED_AT + timedelta(seconds=ttl)
+        monkeypatch.setattr(utils, "utc_now", lambda: edge)
+        assert usecases.get_rate("BTC", "USD").updated_at == UPDATED_AT
+
+    def test_stale_rate_is_not_available(self, rates, monkeypatch):
+        ttl = SettingsLoader().get("rates_ttl_seconds")
+        later = UPDATED_AT + timedelta(seconds=ttl + 1)
+        monkeypatch.setattr(utils, "utc_now", lambda: later)
+        with pytest.raises(RateNotAvailableError, match="BTC→USD"):
+            usecases.get_rate("BTC", "USD")
+
+    def test_missing_pair(self, rates):
+        with pytest.raises(RateNotAvailableError) as info:
+            usecases.get_rate("USD", "ETH")
+        assert str(info.value) == "Не удалось получить курс для USD→ETH"
+
+    @pytest.mark.parametrize(("from_code", "to_code"), [("ABC", "USD"), ("USD", "btc")])
+    def test_unknown_code(self, rates, from_code, to_code):
+        with pytest.raises(CurrencyNotFoundError):
+            usecases.get_rate(from_code, to_code)
+
+    def test_stub_until_rates_json_exists(self, workdir):
+        rate = usecases.get_rate("EUR", "USD")
+        assert rate.value == Decimal("1.0786")
+        assert rate.source == STUB_SOURCE

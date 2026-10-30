@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime
+from decimal import Decimal
 
 __all__ = [
     "MIN_PASSWORD_LENGTH",
@@ -19,6 +20,7 @@ __all__ = [
     "normalize_username",
     "parse_utc",
     "strip_password",
+    "to_decimal",
     "utc_now",
     "verify_password",
 ]
@@ -33,6 +35,9 @@ MSG_EMPTY_USERNAME = "Имя пользователя не может быть �
 MSG_SHORT_PASSWORD = f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов"
 MSG_NAIVE_DATETIME = "Время без часового пояса недопустимо, ожидается UTC"
 MSG_NOT_A_STRING = "Ожидалась строка, получено {type_name}"
+MSG_NOT_A_NUMBER = "Ожидалось число, получено {type_name}"
+MSG_NOT_FINITE = "Сумма должна быть конечным числом"
+MSG_AMOUNT_NOT_POSITIVE = "'amount' должен быть положительным числом"
 
 
 def make_salt() -> str:
@@ -93,6 +98,28 @@ def normalize_password(password: object) -> str:
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(MSG_SHORT_PASSWORD)
     return password
+
+
+def to_decimal(value: object) -> Decimal:
+    """Перевести число в Decimal без двоичного хвоста float.
+
+    float хранит 0.1 неточно, и Decimal(0.1) тянет этот хвост за собой. Через str
+    получается та короткая запись, которую видел пользователь. bool отвергается
+    отдельно, потому что это подкласс int.
+
+    Raises:
+        TypeError: если значение не int, float или Decimal, либо это bool.
+        ValueError: если значение NaN или бесконечность.
+    """
+    if isinstance(value, Decimal):
+        number = value
+    elif type(value) is bool or not isinstance(value, int | float):
+        raise TypeError(MSG_NOT_A_NUMBER.format(type_name=type(value).__name__))
+    else:
+        number = Decimal(str(value))
+    if not number.is_finite():
+        raise ValueError(MSG_NOT_FINITE)
+    return number
 
 
 def utc_now() -> datetime:

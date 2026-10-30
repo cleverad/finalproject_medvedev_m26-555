@@ -1,13 +1,19 @@
 """Модели ядра: пользователь, кошелёк, портфель, курс."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from valutatrade_hub.core import utils
+from valutatrade_hub.core.currencies import Currency, get_currency
+from valutatrade_hub.core.exceptions import InsufficientFundsError
 
-__all__ = ["User"]
+__all__ = ["User", "Wallet"]
 
 UserRecord = dict[str, int | str]
+WalletRecord = dict[str, float]
+
+MSG_NEGATIVE_BALANCE = "Баланс не может быть отрицательным"
 
 
 class User:
@@ -141,3 +147,99 @@ class User:
             salt=data["salt"],
             registration_date=utils.parse_utc(data["registration_date"]),
         )
+
+
+class Wallet:
+    """Кошелёк пользователя в одной валюте.
+
+    Баланс хранится как Decimal с точностью валюты, поэтому остаток после
+    нескольких продаж сходится ровно, без двоичного хвоста float.
+    """
+
+    def __init__(self, currency_code: str, balance: object = 0) -> None:
+        """Создать кошелёк известной валюты.
+
+        Raises:
+            CurrencyNotFoundError: если кода нет в реестре валют.
+            TypeError: если баланс не число.
+            ValueError: если баланс отрицательный, не конечный или точнее валюты.
+        """
+        self._currency = get_currency(currency_code)
+        self.balance = balance
+
+    @property
+    def currency(self) -> Currency:
+        """Валюта кошелька."""
+        return self._currency
+
+    @property
+    def currency_code(self) -> str:
+        """Код валюты кошелька."""
+        return self._currency.code
+
+    @property
+    def balance(self) -> Decimal:
+        """Текущий баланс."""
+        return self._balance
+
+    @balance.setter
+    def balance(self, value: object) -> None:
+        """Установить баланс.
+
+        Raises:
+            TypeError: если значение не число.
+            ValueError: если значение отрицательное, не конечное или точнее валюты.
+        """
+        amount = self._currency.normalize_amount(value)
+        if amount < 0:
+            raise ValueError(MSG_NEGATIVE_BALANCE)
+        self._balance = amount
+
+    def deposit(self, amount: object) -> None:
+        """Пополнить баланс на положительную сумму.
+
+        Raises:
+            TypeError: если сумма не число.
+            ValueError: если сумма не положительная или точнее валюты.
+        """
+        self._balance += self._positive(amount)
+
+    def withdraw(self, amount: object) -> None:
+        """Снять положительную сумму, не больше баланса.
+
+        Raises:
+            TypeError: если сумма не число.
+            ValueError: если сумма не положительная или точнее валюты.
+            InsufficientFundsError: если на кошельке меньше, чем требуется.
+        """
+        required = self._positive(amount)
+        if required > self._balance:
+            raise InsufficientFundsError(
+                available=self._currency.format_amount(self._balance),
+                required=self._currency.format_amount(required),
+                code=self.currency_code,
+            )
+        self._balance -= required
+
+    def get_balance_info(self) -> str:
+        """Вернуть строку вида BTC: 0.0500."""
+        return f"{self.currency_code}: {self._currency.format_amount(self._balance)}"
+
+    def to_dict(self) -> WalletRecord:
+        """Вернуть запись кошелька для portfolios.json, код валюты хранится в ключе."""
+        return {"balance": float(self._balance)}
+
+    @classmethod
+    def from_dict(cls, currency_code: str, data: dict[str, Any]) -> "Wallet":
+        """Собрать кошелёк из записи portfolios.json.
+
+        Raises:
+            KeyError: если в записи нет баланса.
+        """
+        return cls(currency_code, data["balance"])
+
+    def _positive(self, amount: object) -> Decimal:
+        value = self._currency.normalize_amount(amount)
+        if value <= 0:
+            raise ValueError(utils.MSG_AMOUNT_NOT_POSITIVE)
+        return value

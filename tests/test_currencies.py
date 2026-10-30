@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 
 from valutatrade_hub.core import currencies
@@ -87,3 +89,36 @@ class TestRegistry:
         assert codes == tuple(sorted(codes))
         assert set(codes) == set(currencies._REGISTRY)
         assert {"USD", "BTC"} <= set(codes)
+
+
+class TestAmounts:
+    @pytest.mark.parametrize(
+        ("code", "value", "text"),
+        [
+            ("USD", 150, "150.00"),
+            ("USD", 0.5, "0.50"),
+            ("BTC", 0.05, "0.0500"),
+            ("BTC", 0.00000001, "0.0000"),
+            ("EUR", Decimal(200), "200.00"),
+        ],
+    )
+    def test_normalize_then_format(self, code, value, text):
+        currency = get_currency(code)
+        amount = currency.normalize_amount(value)
+        assert amount == Decimal(str(value))
+        assert amount.as_tuple().exponent == -currency.precision
+        assert currency.format_amount(amount) == text
+
+    @pytest.mark.parametrize(
+        ("code", "value"), [("USD", 0.123), ("BTC", 1e-9), ("RUB", Decimal("1.001"))]
+    )
+    def test_too_precise_is_an_error_not_rounding(self, code, value):
+        with pytest.raises(ValueError, match="знаков после запятой"):
+            get_currency(code).normalize_amount(value)
+
+    def test_negative_amount_is_representable(self):
+        assert get_currency("USD").normalize_amount(-1) == Decimal("-1.00")
+
+    def test_non_number_is_a_type_error(self):
+        with pytest.raises(TypeError):
+            get_currency("USD").normalize_amount("1")

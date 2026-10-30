@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -120,3 +121,32 @@ class TestFormatting:
     )
     def test_format_mcap(self, market_cap, text):
         assert utils.format_mcap(market_cap) == text
+
+
+class TestDecimal:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (1, Decimal(1)),
+            (0.1, Decimal("0.1")),
+            (1200.0, Decimal(1200)),
+            (Decimal("0.05"), Decimal("0.05")),
+            (1e-8, Decimal("0.00000001")),
+        ],
+    )
+    def test_numbers_become_exact_decimals(self, value, expected):
+        result = utils.to_decimal(value)
+        assert isinstance(result, Decimal)
+        assert result == expected
+
+    @pytest.mark.parametrize("value", [True, False, "1", None, [1]])
+    def test_non_numbers_are_a_type_error(self, value):
+        with pytest.raises(TypeError, match=type(value).__name__):
+            utils.to_decimal(value)
+
+    @pytest.mark.parametrize(
+        "value", [float("nan"), float("inf"), -float("inf"), Decimal("NaN")]
+    )
+    def test_non_finite_is_rejected(self, value):
+        with pytest.raises(ValueError, match="конечным"):
+            utils.to_decimal(value)

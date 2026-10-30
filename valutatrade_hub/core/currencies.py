@@ -6,6 +6,7 @@
 
 import re
 from abc import ABC, abstractmethod
+from decimal import Decimal
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError
@@ -26,6 +27,9 @@ MSG_BAD_CODE = (
     "Код валюты должен быть из 2–5 заглавных латинских букв, получен {code!r}"
 )
 MSG_EMPTY_NAME = "Имя валюты не может быть пустым"
+MSG_TOO_PRECISE = (
+    "Сумма в {code} не может иметь больше {precision} знаков после запятой"
+)
 
 
 class Currency(ABC):
@@ -50,6 +54,27 @@ class Currency(ABC):
     @abstractmethod
     def get_display_info(self) -> str:
         """Вернуть строку для вывода и логов."""
+
+    def normalize_amount(self, value: object) -> Decimal:
+        """Вернуть сумму в этой валюте как Decimal с точностью хранения.
+
+        Лишние знаки это ошибка, а не молчаливое округление: 0.123 USD не бывает.
+
+        Raises:
+            TypeError: если значение не число.
+            ValueError: если значение не конечное или точнее, чем допускает валюта.
+        """
+        amount = utils.to_decimal(value)
+        step = Decimal(1).scaleb(-self.precision)
+        if amount != amount.quantize(step):
+            raise ValueError(
+                MSG_TOO_PRECISE.format(code=self.code, precision=self.precision)
+            )
+        return amount.quantize(step)
+
+    def format_amount(self, amount: Decimal) -> str:
+        """Записать сумму с точностью вывода: 150.00 для фиата, 0.0500 для крипты."""
+        return f"{amount:.{self.display_precision}f}"
 
 
 class FiatCurrency(Currency):

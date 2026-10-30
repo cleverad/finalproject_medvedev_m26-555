@@ -1,10 +1,16 @@
+import json
 import re
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
 from valutatrade_hub.core import utils
-from valutatrade_hub.core.models import User
+from valutatrade_hub.core.exceptions import (
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+)
+from valutatrade_hub.core.models import User, Wallet
 
 REGISTERED_AT = datetime(2025, 10, 9, 12, 0, 0, tzinfo=UTC)
 
@@ -137,3 +143,102 @@ class TestUser:
     def test_from_dict_rejects_missing_fields(self):
         with pytest.raises(KeyError):
             User.from_dict({"user_id": 1, "username": "alice"})
+
+
+class TestWallet:
+    def test_defaults_to_zero_with_display_precision(self):
+        assert Wallet("USD").get_balance_info() == "USD: 0.00"
+        assert Wallet("BTC").get_balance_info() == "BTC: 0.0000"
+
+    def test_balance_is_decimal_at_storage_precision(self):
+        wallet = Wallet("USD", 1200.0)
+        assert wallet.balance == Decimal(1200)
+        assert isinstance(wallet.balance, Decimal)
+        assert str(wallet.balance) == "1200.00"
+        assert str(Wallet("BTC", 0.05).balance) == "0.05000000"
+
+    def test_deposit_and_withdraw(self):
+        wallet = Wallet("BTC")
+        wallet.deposit(0.05)
+        wallet.withdraw(0.01)
+        assert wallet.balance == Decimal("0.04")
+        assert wallet.get_balance_info() == "BTC: 0.0400"
+
+    def test_three_sales_leave_exactly_zero(self):
+        wallet = Wallet("BTC", 0.3)
+        for _ in range(3):
+            wallet.withdraw(0.1)
+        assert wallet.balance == 0
+
+    def test_insufficient_funds_message_from_the_task(self):
+        wallet = Wallet("BTC", 0.04)
+        with pytest.raises(InsufficientFundsError) as info:
+            wallet.withdraw(0.05)
+        assert str(info.value) == (
+            "Недостаточно средств: доступно 0.0400 BTC, требуется 0.0500 BTC"
+        )
+        assert wallet.balance == Decimal("0.04")
+
+    def test_withdraw_everything_is_allowed(self):
+        wallet = Wallet("USD", 10)
+        wallet.withdraw(10)
+        assert wallet.balance == 0
+
+    @pytest.mark.parametrize("amount", [0, -1, -0.01])
+    def test_non_positive_amount_message_from_the_task(self, amount):
+        wallet = Wallet("USD", 10)
+        for operation in (wallet.deposit, wallet.withdraw):
+            with pytest.raises(ValueError, match="положительным числом"):
+                operation(amount)
+        assert wallet.balance == 10
+
+    @pytest.mark.parametrize("amount", [True, "1", None])
+    def test_amount_must_be_a_number(self, amount):
+        with pytest.raises(TypeError):
+            Wallet("USD", 10).deposit(amount)
+
+    def test_too_precise_amount_is_rejected(self):
+        wallet = Wallet("USD", 10)
+        with pytest.raises(ValueError, match="2 знаков"):
+            wallet.deposit(0.001)
+        assert wallet.balance == 10
+
+    def test_setter_rejects_negative_and_bad_types(self):
+        wallet = Wallet("USD", 10)
+        with pytest.raises(ValueError, match="отрицательным"):
+            wallet.balance = -1
+        for value in (True, "10", None, float("nan"), float("inf")):
+            with pytest.raises((TypeError, ValueError)):
+                wallet.balance = value
+        assert wallet.balance == 10
+
+    @pytest.mark.parametrize("value", [1, 1.0, Decimal(1)])
+    def test_setter_accepts_int_float_and_decimal(self, value):
+        wallet = Wallet("USD")
+        wallet.balance = value
+        assert wallet.balance == Decimal("1.00")
+
+    def test_unknown_currency(self):
+        with pytest.raises(CurrencyNotFoundError, match="'ABC'"):
+            Wallet("ABC")
+
+    def test_currency_code_is_read_only(self):
+        wallet = Wallet("USD")
+        with pytest.raises(AttributeError):
+            wallet.currency_code = "EUR"
+        assert set(vars(wallet)) == {"_currency", "_balance"}
+
+    def test_to_dict_matches_portfolios_json_layout(self):
+        assert Wallet("USD", 1500).to_dict() == {"balance": 1500.0}
+        assert json.dumps(Wallet("USD", 1500).to_dict()) == '{"balance": 1500.0}'
+        assert Wallet("BTC", 0.05).to_dict() == {"balance": 0.05}
+
+    @pytest.mark.parametrize("value", [0.05, 1500, 0.00000001, 123456.78])
+    def test_round_trip_through_json_is_exact(self, value):
+        wallet = Wallet("BTC", value)
+        data = json.loads(json.dumps(wallet.to_dict()))
+        assert Wallet.from_dict("BTC", data).balance == wallet.balance
+
+    def test_from_dict_rejects_missing_balance(self):
+        with pytest.raises(KeyError):
+            Wallet.from_dict("USD", {})

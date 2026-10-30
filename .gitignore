@@ -8,3 +8,5 @@ __pycache__/
 /docs/
 logs/
 .env
+data/*
+!data/.gitkeep

@@ -37,5 +37,14 @@ dev = [
     "ruff>=0.17.3",
 ]
 
+[tool.valutatrade]
+data_dir = "data"
+log_dir = "logs"
+log_level = "INFO"
+rates_ttl_seconds = 300
+default_base_currency = "USD"
+start_balance_usd = 10000
+scheduler_interval_seconds = 300
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

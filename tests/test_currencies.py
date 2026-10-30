@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 
 import pytest
 
@@ -122,3 +122,25 @@ class TestAmounts:
     def test_non_number_is_a_type_error(self):
         with pytest.raises(TypeError):
             get_currency("USD").normalize_amount("1")
+
+
+class TestRounding:
+    @pytest.mark.parametrize(
+        ("code", "value", "rounding", "text"),
+        [
+            ("USD", "2966.8605", ROUND_HALF_UP, "2966.86"),
+            ("USD", "0.005", ROUND_HALF_UP, "0.01"),
+            ("USD", "0.001", ROUND_UP, "0.01"),
+            ("USD", "0.009", ROUND_DOWN, "0.00"),
+            ("BTC", "0.123456789", ROUND_HALF_UP, "0.12345679"),
+        ],
+    )
+    def test_round_amount(self, code, value, rounding, text):
+        assert str(get_currency(code).round_amount(Decimal(value), rounding)) == text
+
+    def test_default_rounding_is_half_up(self):
+        assert get_currency("USD").round_amount(Decimal("0.125")) == Decimal("0.13")
+
+    def test_step(self):
+        assert get_currency("USD").step == Decimal("0.01")
+        assert get_currency("BTC").step == Decimal("0.00000001")

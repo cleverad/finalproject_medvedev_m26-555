@@ -6,7 +6,7 @@
 
 import re
 from abc import ABC, abstractmethod
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError
@@ -65,12 +65,23 @@ class Currency(ABC):
             ValueError: если значение не конечное или точнее, чем допускает валюта.
         """
         amount = utils.to_decimal(value)
-        step = Decimal(1).scaleb(-self.precision)
-        if amount != amount.quantize(step):
+        if amount != amount.quantize(self.step):
             raise ValueError(
                 MSG_TOO_PRECISE.format(code=self.code, precision=self.precision)
             )
-        return amount.quantize(step)
+        return amount.quantize(self.step)
+
+    def round_amount(self, value: Decimal, rounding: str = ROUND_HALF_UP) -> Decimal:
+        """Округлить вычисленную сумму до точности валюты заданным способом.
+
+        Для ввода пользователя есть normalize_amount, он лишние знаки отвергает.
+        """
+        return value.quantize(self.step, rounding=rounding)
+
+    @property
+    def step(self) -> Decimal:
+        """Минимальная сумма в валюте: 0.01 для фиата, 0.00000001 для крипты."""
+        return Decimal(1).scaleb(-self.precision)
 
     def format_amount(self, amount: Decimal) -> str:
         """Записать сумму с точностью вывода: 150.00 для фиата, 0.0500 для крипты."""

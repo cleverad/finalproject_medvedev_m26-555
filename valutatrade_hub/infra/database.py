@@ -1,7 +1,8 @@
 """Хранилище данных: синглтон DatabaseManager над JSON-файлами.
 
 Единственная точка чтения и записи файлов в data/. Запись атомарная: сначала во
-временный файл в той же папке, затем os.replace. Прочитанное кешируется до записи.
+временный файл в той же папке, затем переименование поверх старого. Прочитанное
+кешируется до записи.
 """
 
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Any, Self
 
 from valutatrade_hub.core.exceptions import StorageError
-from valutatrade_hub.core.models import User
+from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.infra.settings import SettingsLoader
 
 __all__ = ["DatabaseManager", "make_cached_reader"]
@@ -111,6 +112,33 @@ class DatabaseManager:
     def next_user_id(self) -> int:
         """Вернуть следующий свободный идентификатор пользователя."""
         return max((user.user_id for user in self.get_users()), default=0) + 1
+
+    def find_user_by_id(self, user_id: int) -> User | None:
+        """Найти пользователя по идентификатору."""
+        for user in self.get_users():
+            if user.user_id == user_id:
+                return user
+        return None
+
+    def get_portfolio(self, user: User) -> Portfolio | None:
+        """Вернуть портфель пользователя из portfolios.json или None."""
+        for record in self._portfolio_records():
+            if record["user_id"] == user.user_id:
+                return Portfolio.from_dict(record, user=user)
+        return None
+
+    def save_portfolio(self, portfolio: Portfolio) -> None:
+        """Записать портфель в portfolios.json, заменив прежний на том же месте."""
+        records = [
+            portfolio.to_dict() if record["user_id"] == portfolio.user_id else record
+            for record in self._portfolio_records()
+        ]
+        if all(record["user_id"] != portfolio.user_id for record in records):
+            records.append(portfolio.to_dict())
+        self.write_json(self._settings.get("portfolios_file"), records)
+
+    def _portfolio_records(self) -> list[dict[str, Any]]:
+        return self.read_json(self._settings.get("portfolios_file"), default=[])
 
 
 def _load_json(path: Path) -> Any:

@@ -12,13 +12,17 @@ from valutatrade_hub.core.exceptions import (
     RateNotAvailableError,
 )
 
-__all__ = ["EXCHANGE_RATES", "Rate", "RatesSnapshot", "User", "Wallet"]
+__all__ = ["EXCHANGE_RATES", "Portfolio", "Rate", "RatesSnapshot", "User", "Wallet"]
 
 UserRecord = dict[str, int | str]
 WalletRecord = dict[str, float]
 
 MSG_NEGATIVE_BALANCE = "Баланс не может быть отрицательным"
 MSG_BAD_RATE = "Курс должен быть положительным числом"
+MSG_WALLET_KEY_MISMATCH = "Кошелёк под ключом {key} хранит валюту {code}"
+MSG_PORTFOLIO_USER_MISMATCH = (
+    "Портфель user_id={user_id} не принадлежит пользователю {username}"
+)
 MSG_BAD_CROSS = "Кросс-курс считается через общую валюту, а не {left} и {right}"
 MSG_BAD_PAIR_KEY = "Ключ пары должен быть вида BTC_USD, получен {key!r}"
 
@@ -409,3 +413,132 @@ class RatesSnapshot:
                 from_code, to_code, utils.to_decimal(value), now, STUB_SOURCE
             )
         return cls(pairs, now)
+
+
+class Portfolio:
+    """Все кошельки одного пользователя.
+
+    Пользователя передаёт вызывающий код: модель не знает о хранилище.
+    """
+
+    def __init__(
+        self,
+        user_id: int,
+        wallets: dict[str, Wallet] | None = None,
+        user: User | None = None,
+    ) -> None:
+        """Собрать портфель из готовых кошельков.
+
+        Raises:
+            ValueError: если ключ кошелька не совпадает с его валютой или
+                пользователь не тот, чей user_id.
+        """
+        if user is not None and user.user_id != user_id:
+            raise ValueError(
+                MSG_PORTFOLIO_USER_MISMATCH.format(
+                    user_id=user_id, username=user.username
+                )
+            )
+        self._user_id = user_id
+        self._user = user
+        self._wallets: dict[str, Wallet] = {}
+        for code, wallet in (wallets or {}).items():
+            if wallet.currency_code != code:
+                raise ValueError(
+                    MSG_WALLET_KEY_MISMATCH.format(key=code, code=wallet.currency_code)
+                )
+            self._wallets[code] = wallet
+
+    @property
+    def user_id(self) -> int:
+        """Идентификатор владельца."""
+        return self._user_id
+
+    @property
+    def user(self) -> User | None:
+        """Владелец, если его передали при создании."""
+        return self._user
+
+    @property
+    def wallets(self) -> dict[str, Wallet]:
+        """Копия словаря кошельков по коду валюты."""
+        return dict(self._wallets)
+
+    def add_currency(self, currency_code: str) -> Wallet:
+        """Вернуть кошелёк валюты, создав его при отсутствии.
+
+        Raises:
+            CurrencyNotFoundError: если кода нет в реестре валют.
+        """
+        wallet = self._wallets.get(currency_code)
+        if wallet is None:
+            wallet = Wallet(currency_code)
+            self._wallets[currency_code] = wallet
+        return wallet
+
+    def get_wallet(self, currency_code: str) -> Wallet | None:
+        """Вернуть кошелёк валюты или None."""
+        return self._wallets.get(currency_code)
+
+    def get_values(
+        self, base_currency: str = BASE_CURRENCY, rates: RatesSnapshot | None = None
+    ) -> dict[str, Decimal]:
+        """Вернуть стоимость каждого кошелька в базовой валюте, по её точности.
+
+        Без снимка курсов берётся заглушка EXCHANGE_RATES.
+
+        Raises:
+            CurrencyNotFoundError: если базовой валюты нет в реестре.
+            RateNotAvailableError: если для какой-то валюты нет курса.
+        """
+        base = get_currency(base_currency)
+        if rates is None:
+            rates = RatesSnapshot.stub(utils.utc_now())
+        return {
+            code: base.round_amount(
+                wallet.balance * rates.get_rate(code, base.code).value
+            )
+            for code, wallet in self._wallets.items()
+        }
+
+    def get_total_value(
+        self, base_currency: str = BASE_CURRENCY, rates: RatesSnapshot | None = None
+    ) -> Decimal:
+        """Вернуть сумму стоимостей кошельков в базовой валюте.
+
+        Итог равен сумме уже округлённых строк, чтобы сходиться при сложении
+        на бумаге.
+
+        Raises:
+            CurrencyNotFoundError: если базовой валюты нет в реестре.
+            RateNotAvailableError: если для какой-то валюты нет курса.
+        """
+        zero = get_currency(base_currency).round_amount(Decimal(0))
+        return sum(self.get_values(base_currency, rates).values(), zero)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Вернуть запись для portfolios.json."""
+        return {
+            "user_id": self._user_id,
+            "wallets": {
+                code: wallet.to_dict() for code, wallet in self._wallets.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], user: User | None = None) -> Self:
+        """Собрать портфель из записи portfolios.json.
+
+        Raises:
+            KeyError: если в записи нет user_id, wallets или баланса кошелька.
+            ValueError: если внутри кошелька указан код не тот, что в ключе.
+        """
+        wallets = {}
+        for code, record in data["wallets"].items():
+            inner_code = record.get("currency_code", code)
+            if inner_code != code:
+                raise ValueError(
+                    MSG_WALLET_KEY_MISMATCH.format(key=code, code=inner_code)
+                )
+            wallets[code] = Wallet.from_dict(code, record)
+        return cls(data["user_id"], wallets, user)

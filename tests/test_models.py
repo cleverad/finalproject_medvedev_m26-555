@@ -13,6 +13,7 @@ from valutatrade_hub.core.exceptions import (
 )
 from valutatrade_hub.core.models import (
     EXCHANGE_RATES,
+    Portfolio,
     Rate,
     RatesSnapshot,
     User,
@@ -408,3 +409,129 @@ class TestRatesSnapshot:
             "stub",
         )
         assert snapshot.last_refresh == UPDATED_AT
+
+
+PORTFOLIO_JSON = {
+    "user_id": 1,
+    "wallets": {
+        "USD": {"balance": 1500.0},
+        "BTC": {"balance": 0.05},
+        "EUR": {"balance": 200.0},
+    },
+}
+
+
+class TestPortfolio:
+    def test_empty_by_default(self):
+        portfolio = Portfolio(1)
+        assert portfolio.user_id == 1
+        assert portfolio.user is None
+        assert portfolio.wallets == {}
+        assert portfolio.get_wallet("USD") is None
+
+    def test_add_currency_creates_once(self):
+        portfolio = Portfolio(1)
+        wallet = portfolio.add_currency("BTC")
+        assert wallet.get_balance_info() == "BTC: 0.0000"
+        wallet.deposit(0.05)
+        assert portfolio.add_currency("BTC") is wallet
+        assert portfolio.get_wallet("BTC") is wallet
+        assert list(portfolio.wallets) == ["BTC"]
+
+    def test_add_unknown_currency(self):
+        with pytest.raises(CurrencyNotFoundError, match="'ABC'"):
+            Portfolio(1).add_currency("ABC")
+
+    def test_wallets_is_a_copy(self):
+        portfolio = Portfolio(1)
+        portfolio.add_currency("USD")
+        copy = portfolio.wallets
+        copy.clear()
+        copy["EUR"] = Wallet("EUR")
+        assert list(portfolio.wallets) == ["USD"]
+
+    def test_user_is_read_only(self):
+        user = make_user()
+        portfolio = Portfolio(1, user=user)
+        assert portfolio.user is user
+        with pytest.raises(AttributeError):
+            portfolio.user = make_user(user_id=2)
+        with pytest.raises(AttributeError):
+            portfolio.user_id = 2
+
+    def test_user_must_match_user_id(self):
+        with pytest.raises(ValueError, match="не принадлежит"):
+            Portfolio(2, user=make_user(user_id=1))
+
+    def test_wallet_key_must_match_its_currency(self):
+        with pytest.raises(ValueError, match="под ключом EUR хранит валюту USD"):
+            Portfolio(1, {"EUR": Wallet("USD")})
+
+    def test_attributes_are_private(self):
+        assert set(vars(Portfolio(1))) == {"_user_id", "_user", "_wallets"}
+
+    def test_values_and_total_in_usd(self):
+        portfolio = Portfolio.from_dict(PORTFOLIO_JSON)
+        rates = RatesSnapshot.from_dict(RATES_JSON)
+        values = portfolio.get_values("USD", rates)
+        assert values == {
+            "USD": Decimal("1500.00"),
+            "BTC": Decimal("2966.86"),
+            "EUR": Decimal("215.72"),
+        }
+        total = portfolio.get_total_value("USD", rates)
+        assert total == Decimal("4682.58")
+        assert total == sum(values.values())
+
+    def test_values_in_another_base(self):
+        portfolio = Portfolio.from_dict(PORTFOLIO_JSON)
+        rates = RatesSnapshot.from_dict(RATES_JSON)
+        values = portfolio.get_values("EUR", rates)
+        assert values["EUR"] == Decimal("200.00")
+        assert values["USD"] == Decimal("1390.69")
+        assert values["BTC"] == Decimal("2750.66")
+
+    def test_total_of_empty_portfolio_is_zero_at_base_precision(self):
+        total = Portfolio(1).get_total_value("USD", RatesSnapshot({}))
+        assert total == 0
+        assert str(total) == "0.00"
+
+    def test_unknown_base_currency(self):
+        with pytest.raises(CurrencyNotFoundError, match="'ABC'"):
+            Portfolio(1).get_total_value("ABC", RatesSnapshot({}))
+
+    def test_missing_rate_is_an_error_not_zero(self):
+        portfolio = Portfolio(1)
+        portfolio.add_currency("GBP").deposit(10)
+        with pytest.raises(RateNotAvailableError, match="GBP→USD"):
+            portfolio.get_total_value("USD", RatesSnapshot.from_dict(RATES_JSON))
+
+    def test_stub_rates_by_default(self, monkeypatch):
+        monkeypatch.setattr(utils, "utc_now", lambda: UPDATED_AT)
+        portfolio = Portfolio(1)
+        portfolio.add_currency("BTC").deposit(1)
+        assert portfolio.get_total_value() == Decimal(str(EXCHANGE_RATES["BTC_USD"]))
+
+    def test_round_trip_with_the_task_example(self):
+        portfolio = Portfolio.from_dict(PORTFOLIO_JSON)
+        assert portfolio.to_dict() == PORTFOLIO_JSON
+        assert json.loads(json.dumps(portfolio.to_dict())) == PORTFOLIO_JSON
+
+    def test_from_dict_accepts_wallet_example_with_inner_code(self):
+        data = {
+            "user_id": 1,
+            "wallets": {"BTC": {"currency_code": "BTC", "balance": 0.05}},
+        }
+        assert Portfolio.from_dict(data).get_wallet("BTC").balance == Decimal("0.05")
+
+    def test_from_dict_rejects_inner_code_mismatch(self):
+        data = {
+            "user_id": 1,
+            "wallets": {"BTC": {"currency_code": "ETH", "balance": 1}},
+        }
+        with pytest.raises(ValueError, match="под ключом BTC хранит валюту ETH"):
+            Portfolio.from_dict(data)
+
+    def test_from_dict_rejects_missing_fields(self):
+        with pytest.raises(KeyError):
+            Portfolio.from_dict({"user_id": 1})

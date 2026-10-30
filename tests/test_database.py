@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from valutatrade_hub.core.exceptions import StorageError
-from valutatrade_hub.core.models import User
+from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.utils import hash_password, utc_now
 from valutatrade_hub.infra.database import DatabaseManager, make_cached_reader
 
@@ -95,3 +95,38 @@ class TestUsers:
         assert db.find_user("bob").user_id == 5
         assert db.find_user("Bob") is None
         assert db.next_user_id() == 6
+
+    def test_find_user_by_id(self, workdir):
+        db = DatabaseManager()
+        db.save_users([make_user(1, "alice"), make_user(5, "bob")])
+        assert db.find_user_by_id(5).username == "bob"
+        assert db.find_user_by_id(2) is None
+
+
+class TestPortfolios:
+    def test_missing_portfolio(self, workdir):
+        assert DatabaseManager().get_portfolio(make_user(1, "alice")) is None
+
+    def test_save_and_load_attaches_the_user(self, workdir: Path):
+        db = DatabaseManager()
+        alice = make_user(1, "alice")
+        portfolio = Portfolio(1, user=alice)
+        portfolio.add_currency("USD").deposit(1500)
+        db.save_portfolio(portfolio)
+        stored = json.loads((workdir / "data" / "portfolios.json").read_text())
+        assert stored == [{"user_id": 1, "wallets": {"USD": {"balance": 1500.0}}}]
+        loaded = db.get_portfolio(alice)
+        assert loaded.user is alice
+        assert loaded.get_wallet("USD").balance == 1500
+
+    def test_save_replaces_in_place_and_appends_new(self, workdir):
+        db = DatabaseManager()
+        for user_id in (1, 2):
+            db.save_portfolio(Portfolio(user_id))
+        updated = Portfolio(1)
+        updated.add_currency("BTC")
+        db.save_portfolio(updated)
+        db.save_portfolio(Portfolio(3))
+        records = db.read_json(workdir / "data" / "portfolios.json", default=[])
+        assert [record["user_id"] for record in records] == [1, 2, 3]
+        assert list(records[0]["wallets"]) == ["BTC"]

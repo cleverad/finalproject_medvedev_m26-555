@@ -4,19 +4,25 @@
 """
 
 from valutatrade_hub.core import utils
+from valutatrade_hub.core.currencies import BASE_CURRENCY
 from valutatrade_hub.core.exceptions import (
     InvalidPasswordError,
     UsernameTakenError,
     UserNotFoundError,
 )
-from valutatrade_hub.core.models import User
+from valutatrade_hub.core.models import Portfolio, User, Wallet
 from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import SettingsLoader
 
 __all__ = ["login", "register"]
 
 
 def register(username: str, password: str) -> User:
-    """Зарегистрировать нового пользователя и сохранить его в users.json.
+    """Зарегистрировать пользователя и завести ему портфель с кошельком USD.
+
+    Стартовый баланс USD берётся из настройки start_balance_usd. Портфель
+    пишется раньше пользователя: сбой между двумя записями не оставит
+    пользователя без портфеля, а портфель без пользователя безвреден.
 
     Raises:
         ValueError: если имя пустое или пароль короче допустимого.
@@ -26,6 +32,9 @@ def register(username: str, password: str) -> User:
     user = User.create(db.next_user_id(), username, password, utils.utc_now())
     if db.find_user(user.username) is not None:
         raise UsernameTakenError(username=user.username)
+    start_balance = SettingsLoader().get("start_balance_usd")
+    usd = Wallet(BASE_CURRENCY, start_balance)
+    db.save_portfolio(Portfolio(user.user_id, {BASE_CURRENCY: usd}, user=user))
     db.save_users([*db.get_users(), user])
     return user
 

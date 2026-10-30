@@ -105,3 +105,18 @@ class TestTime:
     def test_round_trip(self):
         moment = datetime(2026, 10, 30, 9, 1, 37, tzinfo=UTC)
         assert utils.parse_utc(utils.format_utc(moment)) == moment
+
+
+class TestFormatting:
+    @pytest.mark.parametrize(
+        ("market_cap", "text"),
+        [
+            (1.12e12, "1.12e12"),
+            (4.5e11, "4.50e11"),
+            (123456.0, "1.23e5"),
+            (0.0, "0.00e0"),
+            (0.00123, "1.23e-3"),
+        ],
+    )
+    def test_format_mcap(self, market_cap, text):
+        assert utils.format_mcap(market_cap) == text

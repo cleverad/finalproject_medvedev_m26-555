@@ -1,4 +1,4 @@
-"""Вспомогательные функции ядра: пароли, валидация ввода, время.
+"""Вспомогательные функции ядра: пароли, валидация ввода, время, форматирование.
 
 Все функции чистые, ошибки ввода пользователя поднимаются как ValueError.
 """
@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 __all__ = [
     "MIN_PASSWORD_LENGTH",
     "ensure_utc",
+    "format_mcap",
     "format_utc",
     "hash_password",
     "make_salt",
@@ -132,3 +133,12 @@ def parse_utc(text: str) -> datetime:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return ensure_utc(moment)
+
+
+def format_mcap(market_cap: float) -> str:
+    """Записать капитализацию коротко, как в ТЗ: 1.12e12.
+
+    Формат Python даёт 1.12e+12, знак и ведущие нули показателя убираются.
+    """
+    mantissa, exponent = f"{market_cap:.2e}".split("e")
+    return f"{mantissa}e{int(exponent)}"

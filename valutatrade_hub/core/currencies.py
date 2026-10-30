@@ -87,6 +87,10 @@ class Currency(ABC):
         """Записать сумму с точностью вывода: 150.00 для фиата, 0.0500 для крипты."""
         return f"{amount:.{self.display_precision}f}"
 
+    def format_value(self, amount: Decimal) -> str:
+        """Записать стоимость с разделителем тысяч: 3,329.00."""
+        return f"{amount:,.{self.display_precision}f}"
+
 
 class FiatCurrency(Currency):
     """Государственная валюта с указанием страны или зоны эмиссии."""

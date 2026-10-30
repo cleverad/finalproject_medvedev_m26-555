@@ -8,7 +8,10 @@ import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from valutatrade_hub.core import usecases
+from prettytable import PrettyTable
+
+from valutatrade_hub.core import usecases, utils
+from valutatrade_hub.core.currencies import BASE_CURRENCY
 from valutatrade_hub.core.exceptions import ValutaTradeError
 from valutatrade_hub.core.models import User
 
@@ -33,6 +36,14 @@ MSG_OPTION_WITHOUT_VALUE = "Аргумент '--{name}' указан без зн
 MSG_UNKNOWN_OPTION = "Неизвестный аргумент '--{name}'"
 MSG_REPEATED_OPTION = "Аргумент '--{name}' повторяется"
 MSG_EXTRA_VALUE = "Лишнее значение '{value}'"
+MSG_PORTFOLIO_HEADER = "Портфель пользователя '{username}' (база: {base}):"
+MSG_NO_WALLETS = "Кошельков пока нет"
+MSG_TOTAL = "ИТОГО: {total} {base}"
+COLUMN_CURRENCY = "Валюта"
+COLUMN_BALANCE = "Баланс"
+COLUMN_VALUE = "Стоимость, {base}"
+ALIGN_LEFT = "l"
+ALIGN_RIGHT = "r"
 
 
 class Session:
@@ -130,6 +141,30 @@ def cmd_logout(session: Session, options: Options) -> None:
     print(MSG_LOGGED_OUT)
 
 
+def cmd_show_portfolio(session: Session, options: Options) -> None:
+    """Показать кошельки и их стоимость в базовой валюте."""
+    user = session.require()
+    base = utils.normalize_currency_code(options.get("base", BASE_CURRENCY))
+    valuation = usecases.show_portfolio(user.user_id, base)
+    print(MSG_PORTFOLIO_HEADER.format(username=user.username, base=base))
+    wallets = valuation.portfolio.wallets
+    if not wallets:
+        print(MSG_NO_WALLETS)
+        return
+    value_column = COLUMN_VALUE.format(base=base)
+    table = PrettyTable([COLUMN_CURRENCY, COLUMN_BALANCE, value_column])
+    table.align[COLUMN_CURRENCY] = ALIGN_LEFT
+    table.align[COLUMN_BALANCE] = ALIGN_RIGHT
+    table.align[value_column] = ALIGN_RIGHT
+    for code, wallet in wallets.items():
+        balance = wallet.currency.format_amount(wallet.balance)
+        value = valuation.base.format_value(valuation.values[code])
+        table.add_row([code, balance, value])
+    print(table)
+    total = valuation.base.format_value(valuation.total)
+    print(MSG_TOTAL.format(total=total, base=base))
+
+
 def cmd_help(session: Session, options: Options) -> None:
     """Показать справку по всем командам или по одной."""
     name = options.get("command")
@@ -161,6 +196,12 @@ COMMANDS: dict[str, Command] = {
         required=("username", "password"),
     ),
     "logout": Command(cmd_logout, "logout", requires_login=True),
+    "show-portfolio": Command(
+        cmd_show_portfolio,
+        "show-portfolio [--base <str>]",
+        optional=("base",),
+        requires_login=True,
+    ),
     "help": Command(cmd_help, "help [команда]", positional="command"),
     "exit": Command(cmd_exit, "exit"),
 }

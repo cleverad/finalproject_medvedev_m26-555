@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from valutatrade_hub.core.exceptions import StorageError
-from valutatrade_hub.core.models import Portfolio, User
+from valutatrade_hub.core.models import Portfolio, RatesSnapshot, User
 from valutatrade_hub.core.utils import hash_password, utc_now
 from valutatrade_hub.infra.database import DatabaseManager, make_cached_reader
 
@@ -130,3 +130,27 @@ class TestPortfolios:
         records = db.read_json(workdir / "data" / "portfolios.json", default=[])
         assert [record["user_id"] for record in records] == [1, 2, 3]
         assert list(records[0]["wallets"]) == ["BTC"]
+
+
+class TestRates:
+    def test_missing_file_gives_none(self, workdir):
+        assert DatabaseManager().get_rates() is None
+
+    def test_round_trip(self, workdir: Path):
+        db = DatabaseManager()
+        snapshot = RatesSnapshot.from_dict(
+            {
+                "pairs": {
+                    "BTC_USD": {
+                        "rate": 59337.21,
+                        "updated_at": "2025-10-10T12:00:00Z",
+                        "source": "CoinGecko",
+                    }
+                },
+                "last_refresh": "2025-10-10T12:00:01Z",
+            }
+        )
+        db.save_rates(snapshot)
+        stored = json.loads((workdir / "data" / "rates.json").read_text())
+        assert stored == snapshot.to_dict()
+        assert db.get_rates() == snapshot

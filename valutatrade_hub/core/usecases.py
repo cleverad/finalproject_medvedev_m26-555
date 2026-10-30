@@ -4,17 +4,20 @@
 """
 
 from valutatrade_hub.core import utils
-from valutatrade_hub.core.currencies import BASE_CURRENCY
+from valutatrade_hub.core.currencies import BASE_CURRENCY, get_currency
 from valutatrade_hub.core.exceptions import (
+    CurrencyNotFoundError,
     InvalidPasswordError,
     UsernameTakenError,
     UserNotFoundError,
 )
-from valutatrade_hub.core.models import Portfolio, User, Wallet
+from valutatrade_hub.core.models import Portfolio, PortfolioValuation, User, Wallet
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 
-__all__ = ["login", "register"]
+MSG_UNKNOWN_BASE = "Неизвестная базовая валюта '{code}'"
+
+__all__ = ["login", "register", "show_portfolio"]
 
 
 def register(username: str, password: str) -> User:
@@ -54,3 +57,28 @@ def login(username: str, password: str) -> User:
     if not user.verify_password(password):
         raise InvalidPasswordError()
     return user
+
+
+def show_portfolio(
+    user_id: int, base_currency: str = BASE_CURRENCY
+) -> PortfolioValuation:
+    """Оценить портфель пользователя в базовой валюте по снимку rates.json.
+
+    Срок годности курсов здесь не проверяется: показ портфеля не сделка.
+    Пока rates.json нет, берётся заглушка EXCHANGE_RATES.
+
+    Raises:
+        UserNotFoundError: если пользователя с таким id нет.
+        ValueError: если базовой валюты нет в реестре.
+        RateNotAvailableError: если для какой-то валюты портфеля нет курса.
+    """
+    db = DatabaseManager()
+    user = db.find_user_by_id(user_id)
+    if user is None:
+        raise UserNotFoundError(username=user_id)
+    try:
+        get_currency(base_currency)
+    except CurrencyNotFoundError:
+        raise ValueError(MSG_UNKNOWN_BASE.format(code=base_currency)) from None
+    portfolio = db.get_portfolio(user) or Portfolio(user.user_id, user=user)
+    return portfolio.get_valuation(base_currency, db.get_rates())

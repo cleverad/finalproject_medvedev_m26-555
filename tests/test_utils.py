@@ -64,6 +64,19 @@ class TestValidation:
     def test_inner_spaces_are_kept(self):
         assert utils.normalize_password(" correct horse ") == "correct horse"
 
+    @pytest.mark.parametrize("code", ["btc", " BTC ", "Btc"])
+    def test_currency_code_is_stripped_and_uppercased(self, code):
+        assert utils.normalize_currency_code(code) == "BTC"
+
+    @pytest.mark.parametrize("code", ["", "   "])
+    def test_empty_currency_code_is_rejected(self, code):
+        with pytest.raises(ValueError, match="не может быть пустым"):
+            utils.normalize_currency_code(code)
+
+    def test_currency_code_must_be_a_string(self):
+        with pytest.raises(TypeError, match="NoneType"):
+            utils.normalize_currency_code(None)
+
 
 class TestTime:
     def test_utc_now_is_aware_utc(self):
@@ -134,7 +147,7 @@ class TestFormatting:
             ("1.0786", "1.0786"),
         ],
     )
-    def test_format_rate_from_the_task_examples(self, value, text):
+    def test_format_rate(self, value, text):
         assert utils.format_rate(Decimal(value)) == text
 
 

@@ -17,6 +17,7 @@ __all__ = [
     "format_utc",
     "hash_password",
     "make_salt",
+    "normalize_currency_code",
     "normalize_password",
     "normalize_username",
     "parse_utc",
@@ -38,6 +39,7 @@ MSG_EMPTY_USERNAME = "Имя пользователя не может быть �
 MSG_SHORT_PASSWORD = f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов"
 MSG_NAIVE_DATETIME = "Время без часового пояса недопустимо, ожидается UTC"
 MSG_NOT_A_STRING = "Ожидалась строка, получено {type_name}"
+MSG_EMPTY_CURRENCY_CODE = "Код валюты не может быть пустым"
 MSG_NOT_A_NUMBER = "Ожидалось число, получено {type_name}"
 MSG_NOT_FINITE = "Сумма должна быть конечным числом"
 MSG_AMOUNT_NOT_POSITIVE = "'amount' должен быть положительным числом"
@@ -51,8 +53,8 @@ def make_salt() -> str:
 def hash_password(password: str, salt: str) -> str:
     """Вернуть hex-хеш пароля с солью.
 
-    Используется PBKDF2 поверх SHA-256: та же пара соль плюс SHA-256, что требует
-    ТЗ, но устойчивее к перебору, чем один вызов sha256.
+    Используется PBKDF2 поверх SHA-256: та же пара соль плюс SHA-256, но
+    устойчивее к перебору, чем один вызов sha256.
     """
     digest = hashlib.pbkdf2_hmac(
         HASH_NAME, password.encode(), salt.encode(), PBKDF2_ITERATIONS
@@ -101,6 +103,23 @@ def normalize_password(password: object) -> str:
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(MSG_SHORT_PASSWORD)
     return password
+
+
+def normalize_currency_code(code: object) -> str:
+    """Вернуть код валюты без краевых пробелов в верхнем регистре.
+
+    Проверка по реестру остаётся за get_currency, здесь только форма ввода.
+
+    Raises:
+        TypeError: если код не строка.
+        ValueError: если код после очистки пустой.
+    """
+    if not isinstance(code, str):
+        raise TypeError(MSG_NOT_A_STRING.format(type_name=type(code).__name__))
+    code = code.strip().upper()
+    if not code:
+        raise ValueError(MSG_EMPTY_CURRENCY_CODE)
+    return code
 
 
 def to_decimal(value: object) -> Decimal:
@@ -166,7 +185,7 @@ def parse_utc(text: str) -> datetime:
 
 
 def format_mcap(market_cap: float) -> str:
-    """Записать капитализацию коротко, как в ТЗ: 1.12e12.
+    """Записать капитализацию коротко: 1.12e12.
 
     Формат Python даёт 1.12e+12, знак и ведущие нули показателя убираются.
     """

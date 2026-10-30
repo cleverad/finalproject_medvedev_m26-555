@@ -12,7 +12,15 @@ from valutatrade_hub.core.exceptions import (
     RateNotAvailableError,
 )
 
-__all__ = ["EXCHANGE_RATES", "Portfolio", "Rate", "RatesSnapshot", "User", "Wallet"]
+__all__ = [
+    "EXCHANGE_RATES",
+    "Portfolio",
+    "PortfolioValuation",
+    "Rate",
+    "RatesSnapshot",
+    "User",
+    "Wallet",
+]
 
 UserRecord = dict[str, int | str]
 WalletRecord = dict[str, float]
@@ -31,7 +39,7 @@ IDENTITY_SOURCE = "identity"
 STUB_SOURCE = "stub"
 CROSS_SOURCE_SEPARATOR = "+"
 
-# Фиксированные курсы из примера ТЗ на случай, когда снимок rates.json ещё пуст.
+# Фиксированные курсы на случай, когда снимка rates.json ещё нет.
 EXCHANGE_RATES: dict[str, float] = {
     "EUR_USD": 1.0786,
     "BTC_USD": 59337.21,
@@ -506,6 +514,17 @@ class Portfolio:
     ) -> Decimal:
         """Вернуть сумму стоимостей кошельков в базовой валюте.
 
+        Raises:
+            CurrencyNotFoundError: если базовой валюты нет в реестре.
+            RateNotAvailableError: если для какой-то валюты нет курса.
+        """
+        return self.get_valuation(base_currency, rates).total
+
+    def get_valuation(
+        self, base_currency: str = BASE_CURRENCY, rates: RatesSnapshot | None = None
+    ) -> "PortfolioValuation":
+        """Вернуть стоимость каждого кошелька и итог в базовой валюте.
+
         Итог равен сумме уже округлённых строк, чтобы сходиться при сложении
         на бумаге.
 
@@ -513,8 +532,10 @@ class Portfolio:
             CurrencyNotFoundError: если базовой валюты нет в реестре.
             RateNotAvailableError: если для какой-то валюты нет курса.
         """
-        zero = get_currency(base_currency).round_amount(Decimal(0))
-        return sum(self.get_values(base_currency, rates).values(), zero)
+        base = get_currency(base_currency)
+        values = self.get_values(base_currency, rates)
+        total = sum(values.values(), base.round_amount(Decimal(0)))
+        return PortfolioValuation(self, base, values, total)
 
     def to_dict(self) -> dict[str, Any]:
         """Вернуть запись для portfolios.json."""
@@ -542,3 +563,13 @@ class Portfolio:
                 )
             wallets[code] = Wallet.from_dict(code, record)
         return cls(data["user_id"], wallets, user)
+
+
+@dataclass(frozen=True)
+class PortfolioValuation:
+    """Портфель, оценённый в базовой валюте: стоимость каждого кошелька и итог."""
+
+    portfolio: Portfolio
+    base: Currency
+    values: dict[str, Decimal]
+    total: Decimal

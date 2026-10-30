@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Self
 
 from valutatrade_hub.core.exceptions import StorageError
-from valutatrade_hub.core.models import Portfolio, User
+from valutatrade_hub.core.models import Portfolio, RatesSnapshot, User
 from valutatrade_hub.infra.settings import SettingsLoader
 
 __all__ = ["DatabaseManager", "make_cached_reader"]
@@ -139,6 +139,15 @@ class DatabaseManager:
 
     def _portfolio_records(self) -> list[dict[str, Any]]:
         return self.read_json(self._settings.get("portfolios_file"), default=[])
+
+    def get_rates(self) -> RatesSnapshot | None:
+        """Вернуть снимок курсов из rates.json или None, если файла ещё нет."""
+        data = self.read_json(self._settings.get("rates_file"), default=None)
+        return None if data is None else RatesSnapshot.from_dict(data)
+
+    def save_rates(self, snapshot: RatesSnapshot) -> None:
+        """Записать снимок курсов в rates.json."""
+        self.write_json(self._settings.get("rates_file"), snapshot.to_dict())
 
 
 def _load_json(path: Path) -> Any:

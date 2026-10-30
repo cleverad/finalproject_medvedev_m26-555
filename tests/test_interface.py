@@ -144,6 +144,44 @@ class TestCommands:
         )
         assert run_lines(["help login"], capsys).startswith(COMMANDS["login"].usage)
 
+    def test_show_portfolio_prints_header_table_and_total(self, workdir, capsys):
+        out = run_lines(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                "show-portfolio",
+            ],
+            capsys,
+        ).splitlines()
+        assert "Портфель пользователя 'alice' (база: USD):" in out
+        assert any("| USD" in line and "10,000.00" in line for line in out)
+        assert out[-1] == "ИТОГО: 10,000.00 USD"
+
+    def test_show_portfolio_base_is_uppercased(self, workdir, capsys):
+        out = run_lines(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                "show-portfolio --base eur",
+            ],
+            capsys,
+        ).splitlines()
+        assert "Портфель пользователя 'alice' (база: EUR):" in out
+        assert out[-1].endswith(" EUR")
+
+    def test_show_portfolio_errors(self, workdir, capsys):
+        out = run_lines(["show-portfolio"], capsys)
+        assert "Сначала выполните login" in out
+        out = run_lines(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                "show-portfolio --base ABC",
+            ],
+            capsys,
+        )
+        assert "Неизвестная базовая валюта 'ABC'" in out
+
     def test_exit_stops_session(self, workdir, capsys):
         session = Session()
         interface.execute("exit", session)

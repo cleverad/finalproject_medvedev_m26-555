@@ -15,13 +15,13 @@ from valutatrade_hub.core.exceptions import CurrencyNotFoundError
 
 
 class TestDisplayInfo:
-    def test_fiat_format_from_the_task(self):
+    def test_fiat_display_format(self):
         usd = FiatCurrency("US Dollar", "USD", "United States")
         assert (
             usd.get_display_info() == "[FIAT] USD — US Dollar (Issuing: United States)"
         )
 
-    def test_crypto_format_from_the_task(self):
+    def test_crypto_display_format(self):
         btc = CryptoCurrency("Bitcoin", "BTC", "SHA-256", 1.12e12)
         assert (
             btc.get_display_info()
@@ -53,7 +53,7 @@ class TestInvariants:
 
 
 class TestRegistry:
-    def test_base_currency_is_usd_as_in_the_task(self):
+    def test_base_currency_is_usd(self):
         assert BASE_CURRENCY == "USD"
         assert isinstance(get_currency(BASE_CURRENCY), FiatCurrency)
 
@@ -115,6 +115,19 @@ class TestAmounts:
     def test_too_precise_is_an_error_not_rounding(self, code, value):
         with pytest.raises(ValueError, match="знаков после запятой"):
             get_currency(code).normalize_amount(value)
+
+    @pytest.mark.parametrize(
+        ("code", "value", "text"),
+        [
+            ("USD", "3329", "3,329.00"),
+            ("USD", "2965", "2,965.00"),
+            ("USD", "150", "150.00"),
+            ("USD", "1234567.891", "1,234,567.89"),
+            ("BTC", "12345.6789", "12,345.6789"),
+        ],
+    )
+    def test_format_value_with_thousands_separator(self, code, value, text):
+        assert get_currency(code).format_value(Decimal(value)) == text
 
     def test_negative_amount_is_representable(self):
         assert get_currency("USD").normalize_amount(-1) == Decimal("-1.00")

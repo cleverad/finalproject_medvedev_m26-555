@@ -14,6 +14,7 @@ from valutatrade_hub.core.exceptions import (
 from valutatrade_hub.core.models import (
     EXCHANGE_RATES,
     Portfolio,
+    PortfolioValuation,
     Rate,
     RatesSnapshot,
     User,
@@ -194,7 +195,7 @@ class TestWallet:
             wallet.withdraw(0.1)
         assert wallet.balance == 0
 
-    def test_insufficient_funds_message_from_the_task(self):
+    def test_insufficient_funds_message(self):
         wallet = Wallet("BTC", 0.04)
         with pytest.raises(InsufficientFundsError) as info:
             wallet.withdraw(0.05)
@@ -209,7 +210,7 @@ class TestWallet:
         assert wallet.balance == 0
 
     @pytest.mark.parametrize("amount", [0, -1, -0.01])
-    def test_non_positive_amount_message_from_the_task(self, amount):
+    def test_non_positive_amount_message(self, amount):
         wallet = Wallet("USD", 10)
         for operation in (wallet.deposit, wallet.withdraw):
             with pytest.raises(ValueError, match="положительным числом"):
@@ -347,7 +348,7 @@ class TestRate:
 
 
 class TestRatesSnapshot:
-    def test_round_trip_with_the_task_example(self):
+    def test_round_trip_with_json_example(self):
         snapshot = RatesSnapshot.from_dict(RATES_JSON)
         assert snapshot.last_refresh == UPDATED_AT + timedelta(seconds=1)
         assert snapshot.pairs["BTC_USD"] == btc_usd()
@@ -399,7 +400,7 @@ class TestRatesSnapshot:
             snapshot.get_rate(from_code, to_code)
         assert str(info.value) == f"Не удалось получить курс для {from_code}→{to_code}"
 
-    def test_stub_uses_the_task_rates(self):
+    def test_stub_rates(self):
         snapshot = RatesSnapshot.stub(UPDATED_AT)
         assert set(snapshot.pairs) == set(EXCHANGE_RATES)
         rate = snapshot.get_rate("BTC", "USD")
@@ -512,7 +513,7 @@ class TestPortfolio:
         portfolio.add_currency("BTC").deposit(1)
         assert portfolio.get_total_value() == Decimal(str(EXCHANGE_RATES["BTC_USD"]))
 
-    def test_round_trip_with_the_task_example(self):
+    def test_round_trip_with_json_example(self):
         portfolio = Portfolio.from_dict(PORTFOLIO_JSON)
         assert portfolio.to_dict() == PORTFOLIO_JSON
         assert json.loads(json.dumps(portfolio.to_dict())) == PORTFOLIO_JSON
@@ -535,3 +536,26 @@ class TestPortfolio:
     def test_from_dict_rejects_missing_fields(self):
         with pytest.raises(KeyError):
             Portfolio.from_dict({"user_id": 1})
+
+
+class TestPortfolioValuation:
+    def test_collects_values_and_total(self):
+        portfolio = Portfolio.from_dict(PORTFOLIO_JSON)
+        rates = RatesSnapshot.from_dict(RATES_JSON)
+        valuation = portfolio.get_valuation("USD", rates)
+        assert isinstance(valuation, PortfolioValuation)
+        assert valuation.portfolio is portfolio
+        assert valuation.base.code == "USD"
+        assert valuation.values == portfolio.get_values("USD", rates)
+        assert valuation.total == Decimal("4682.58")
+        assert valuation.total == portfolio.get_total_value("USD", rates)
+
+    def test_without_rates_uses_the_stub(self, monkeypatch):
+        monkeypatch.setattr(utils, "utc_now", lambda: UPDATED_AT)
+        portfolio = Portfolio(1)
+        portfolio.add_currency("EUR").deposit(100)
+        assert portfolio.get_valuation("USD").total == Decimal("107.86")
+
+    def test_unknown_base(self):
+        with pytest.raises(CurrencyNotFoundError):
+            Portfolio(1).get_valuation("ABC")

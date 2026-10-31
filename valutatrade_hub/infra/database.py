@@ -54,18 +54,23 @@ class DatabaseManager:
     Синглтон через __new__, как и SettingsLoader.
     """
 
-    _instance: "DatabaseManager | None" = None
+    _instance: Self | None = None
+    _settings: SettingsLoader
+    _read: Callable[[Path], Any]
+    _forget: Callable[[Path | None], None]
 
     def __new__(cls) -> Self:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._settings = SettingsLoader()
-            cls._instance._read, cls._instance._forget = make_cached_reader(_load_json)
-        return cls._instance
+        instance = cls._instance
+        if instance is None:
+            instance = super().__new__(cls)
+            instance._settings = SettingsLoader()
+            instance._read, instance._forget = make_cached_reader(_load_json)
+            cls._instance = instance
+        return instance
 
     def reset_cache(self) -> None:
         """Забыть всё прочитанное, следующее чтение пойдёт с диска."""
-        self._forget()
+        self._forget(None)
 
     def read_json(self, path: Path, default: Any) -> Any:
         """Прочитать JSON-файл, для отсутствующего файла вернуть default.
@@ -138,7 +143,10 @@ class DatabaseManager:
         self.write_json(self._settings.get("portfolios_file"), records)
 
     def _portfolio_records(self) -> list[dict[str, Any]]:
-        return self.read_json(self._settings.get("portfolios_file"), default=[])
+        records: list[dict[str, Any]] = self.read_json(
+            self._settings.get("portfolios_file"), default=[]
+        )
+        return records
 
     def get_rates(self) -> RatesSnapshot | None:
         """Вернуть снимок курсов из rates.json или None, если файла ещё нет."""

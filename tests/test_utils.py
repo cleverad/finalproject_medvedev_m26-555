@@ -136,6 +136,47 @@ class TestFormatting:
         assert utils.format_mcap(market_cap) == text
 
     @pytest.mark.parametrize(
+        ("text", "value"),
+        [("0.05", "0.05"), ("100", "100"), (" 1 ", "1"), ("1e-8", "1E-8"), ("+5", "5")],
+    )
+    def test_parse_amount(self, text, value):
+        assert utils.parse_amount(text) == Decimal(value)
+
+    @pytest.mark.parametrize(
+        "text", ["abc", "", "0", "-1", "nan", "inf", "1,5", "0x10", "--amount"]
+    )
+    def test_parse_amount_rejects_with_one_message(self, text):
+        with pytest.raises(ValueError, match=re.escape(utils.MSG_AMOUNT_NOT_POSITIVE)):
+            utils.parse_amount(text)
+
+    @pytest.mark.parametrize(
+        ("text", "min_decimals", "result"),
+        [
+            ("59337.21000000", 2, "59337.21"),
+            ("3720.00000000", 2, "3720.00"),
+            ("0.00000001", 4, "0.00000001"),
+            ("0.05000000", 4, "0.0500"),
+            ("1,000.00", 2, "1,000.00"),
+            ("7.50", 0, "7.5"),
+            ("7.00", 0, "7."),
+        ],
+    )
+    def test_trim_zeros(self, text, min_decimals, result):
+        assert utils.trim_zeros(text, min_decimals) == result
+
+    def test_format_display_time(self):
+        moment = datetime(2025, 10, 9, 0, 3, 22, tzinfo=UTC)
+        assert utils.format_display_time(moment) == "2025-10-09 00:03:22 UTC"
+
+    def test_format_display_time_converts_to_utc(self):
+        moment = datetime(2025, 10, 9, 3, 3, 22, tzinfo=timezone(timedelta(hours=3)))
+        assert utils.format_display_time(moment) == "2025-10-09 00:03:22 UTC"
+
+    def test_format_display_time_rejects_naive(self):
+        with pytest.raises(ValueError, match=NAIVE):
+            utils.format_display_time(datetime(2025, 10, 9))
+
+    @pytest.mark.parametrize(
         ("value", "text"),
         [
             ("59337.21", "59337.21"),

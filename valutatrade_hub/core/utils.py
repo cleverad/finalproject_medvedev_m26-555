@@ -7,11 +7,12 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 __all__ = [
     "MIN_PASSWORD_LENGTH",
     "ensure_utc",
+    "format_display_time",
     "format_mcap",
     "format_rate",
     "format_utc",
@@ -20,9 +21,12 @@ __all__ = [
     "normalize_currency_code",
     "normalize_password",
     "normalize_username",
+    "parse_amount",
     "parse_utc",
+    "quote",
     "strip_password",
     "to_decimal",
+    "trim_zeros",
     "utc_now",
     "verify_password",
 ]
@@ -32,6 +36,9 @@ SALT_BYTES = 8
 HASH_NAME = "sha256"
 PBKDF2_ITERATIONS = 100_000
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC"
+DECIMAL_POINT = "."
+QUOTE = "'"
 RATE_MAX_DECIMALS = 8
 RATE_MIN_DECIMALS = 2
 
@@ -122,6 +129,24 @@ def normalize_currency_code(code: object) -> str:
     return code
 
 
+def parse_amount(text: str) -> Decimal:
+    """Прочитать положительную сумму из строки команды.
+
+    Любая неудача даёт одно и то же сообщение: пользователю достаточно знать,
+    что сумма отклонена, причина отклонения ему не нужна.
+
+    Raises:
+        ValueError: если строка не число, число не конечное или не положительное.
+    """
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        raise ValueError(MSG_AMOUNT_NOT_POSITIVE) from None
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError(MSG_AMOUNT_NOT_POSITIVE)
+    return amount
+
+
 def to_decimal(value: object) -> Decimal:
     """Перевести число в Decimal без двоичного хвоста float.
 
@@ -172,6 +197,15 @@ def format_utc(moment: datetime) -> str:
     return ensure_utc(moment).strftime(UTC_FORMAT)
 
 
+def format_display_time(moment: datetime) -> str:
+    """Записать момент времени для вывода пользователю: 2026-10-30 09:01:37 UTC.
+
+    Raises:
+        ValueError: если у момента нет часового пояса.
+    """
+    return ensure_utc(moment).strftime(DISPLAY_TIME_FORMAT)
+
+
 def parse_utc(text: str) -> datetime:
     """Прочитать ISO-время, наивное время считается UTC.
 
@@ -193,12 +227,25 @@ def format_mcap(market_cap: float) -> str:
     return f"{mantissa}e{int(exponent)}"
 
 
+def trim_zeros(text: str, min_decimals: int) -> str:
+    """Убрать хвостовые нули дробной части, оставив не меньше min_decimals знаков.
+
+    Текст уже отформатирован с максимальной точностью: 59337.21000000 даёт
+    59337.21, 3720.00000000 даёт 3720.00 при минимуме 2.
+    """
+    whole, fraction = text.split(DECIMAL_POINT)
+    fraction = fraction.rstrip("0").ljust(min_decimals, "0")
+    return f"{whole}{DECIMAL_POINT}{fraction}"
+
+
 def format_rate(value: Decimal) -> str:
     """Записать курс не длиннее 8 знаков после запятой и не короче 2.
 
     Хвостовые нули убираются: 59337.21, 3720.00, 0.01016, 0.00001685.
     """
-    text = f"{value:.{RATE_MAX_DECIMALS}f}"
-    whole, fraction = text.split(".")
-    fraction = fraction.rstrip("0").ljust(RATE_MIN_DECIMALS, "0")
-    return f"{whole}.{fraction}"
+    return trim_zeros(f"{value:.{RATE_MAX_DECIMALS}f}", RATE_MIN_DECIMALS)
+
+
+def quote(text: object) -> str:
+    """Взять значение в одинарные кавычки для записи журнала: 'alice'."""
+    return f"{QUOTE}{text}{QUOTE}"

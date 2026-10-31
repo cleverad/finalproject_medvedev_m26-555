@@ -13,12 +13,12 @@ import time
 from collections.abc import Callable, Sequence
 
 from valutatrade_hub.core.exceptions import ApiRequestError
-from valutatrade_hub.infra.logging_config import (
+from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.logging_config import (
     PARSER_LOGGER,
     parser_console,
     setup_logging,
 )
-from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.parser_service.updater import UpdateResult, refresh_rates
 
 __all__ = ["RatesScheduler", "main"]

@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from valutatrade_hub.core.exceptions import ApiRequestError
-from valutatrade_hub.infra.logging_config import PARSER_LOGGER
+from valutatrade_hub.logging_config import PARSER_LOGGER
 from valutatrade_hub.parser_service import api_clients
 from valutatrade_hub.parser_service.api_clients import (
     BaseApiClient,

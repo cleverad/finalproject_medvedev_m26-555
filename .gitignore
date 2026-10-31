@@ -3,6 +3,7 @@ dist/
 __pycache__/
 *.egg-info
 .ruff_cache/
+.mypy_cache/
 .pytest_cache/
 /.idea/
 /docs/

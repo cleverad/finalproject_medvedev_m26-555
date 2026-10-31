@@ -13,7 +13,6 @@ from valutatrade_hub.core.currencies import (
     Currency,
     get_currency,
 )
-from valutatrade_hub.core.decorators import log_action
 from valutatrade_hub.core.exceptions import (
     ApiRequestError,
     CurrencyNotFoundError,
@@ -34,6 +33,7 @@ from valutatrade_hub.core.models import (
     User,
     Wallet,
 )
+from valutatrade_hub.decorators import log_action
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.parser_service.updater import UpdateResult, refresh_rates

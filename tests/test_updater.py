@@ -8,7 +8,7 @@ from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.models import Rate
 from valutatrade_hub.infra.database import DatabaseManager
-from valutatrade_hub.infra.logging_config import PARSER_LOGGER
+from valutatrade_hub.logging_config import PARSER_LOGGER
 from valutatrade_hub.parser_service import updater as updater_module
 from valutatrade_hub.parser_service.api_clients import (
     BaseApiClient,

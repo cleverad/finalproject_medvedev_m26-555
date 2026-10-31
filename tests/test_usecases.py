@@ -23,8 +23,8 @@ from valutatrade_hub.core.models import (
     RatesSnapshot,
 )
 from valutatrade_hub.infra.database import DatabaseManager
-from valutatrade_hub.infra.logging_config import ACTIONS_LOGGER
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.logging_config import ACTIONS_LOGGER
 from valutatrade_hub.parser_service.updater import UpdateResult
 
 

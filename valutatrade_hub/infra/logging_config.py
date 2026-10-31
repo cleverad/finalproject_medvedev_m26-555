@@ -41,7 +41,8 @@ LOG_ENCODING = "utf-8"
 
 def parser_log_path() -> Path:
     """Вернуть путь к журналу парсера по текущим настройкам."""
-    return SettingsLoader().get("log_dir") / PARSER_LOG_FILE
+    log_dir: Path = SettingsLoader().get("log_dir")
+    return log_dir / PARSER_LOG_FILE
 
 
 def setup_logging() -> None:

@@ -3,6 +3,8 @@
 Текст сообщения задаётся шаблоном класса, поля шаблона сохраняются атрибутами.
 """
 
+from pathlib import Path
+
 __all__ = [
     "ApiRequestError",
     "CurrencyNotFoundError",
@@ -35,6 +37,9 @@ class ValutaTradeError(Exception):
 class InsufficientFundsError(ValutaTradeError):
     """На кошельке меньше средств, чем требует операция."""
 
+    available: str
+    required: str
+    code: str
     template = (
         "Недостаточно средств: доступно {available} {code}, требуется {required} {code}"
     )
@@ -43,24 +48,28 @@ class InsufficientFundsError(ValutaTradeError):
 class CurrencyNotFoundError(ValutaTradeError):
     """Код валюты отсутствует в реестре."""
 
+    code: str
     template = "Неизвестная валюта '{code}'"
 
 
 class ApiRequestError(ValutaTradeError):
     """Сбой при обращении к внешнему API курсов."""
 
+    reason: str
     template = "Ошибка при обращении к внешнему API: {reason}"
 
 
 class UserNotFoundError(ValutaTradeError):
     """Пользователь с таким именем не зарегистрирован."""
 
+    username: str
     template = "Пользователь '{username}' не найден"
 
 
 class UsernameTakenError(ValutaTradeError):
     """Имя пользователя уже занято."""
 
+    username: str
     template = "Имя пользователя '{username}' уже занято"
 
 
@@ -73,6 +82,7 @@ class InvalidPasswordError(ValutaTradeError):
 class WalletNotFoundError(ValutaTradeError):
     """В портфеле нет кошелька для этой валюты."""
 
+    code: str
     template = (
         "У вас нет кошелька '{code}'. Добавьте валюту: она создаётся "
         "автоматически при первой покупке."
@@ -82,10 +92,14 @@ class WalletNotFoundError(ValutaTradeError):
 class RateNotAvailableError(ValutaTradeError):
     """В кеше нет курса для пары валют."""
 
+    from_code: str
+    to_code: str
     template = "Не удалось получить курс для {from_code}→{to_code}"
 
 
 class StorageError(ValutaTradeError):
     """Файл данных недоступен или повреждён."""
 
+    path: Path
+    reason: str
     template = "Не удалось прочитать {path}: {reason}"

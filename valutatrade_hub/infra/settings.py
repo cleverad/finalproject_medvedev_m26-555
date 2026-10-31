@@ -46,13 +46,15 @@ class SettingsLoader:
     Синглтон через __new__: короче метакласса и читается без знания метаклассов.
     """
 
-    _instance: "SettingsLoader | None" = None
+    _instance: Self | None = None
 
     def __new__(cls) -> Self:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance.reload()
-        return cls._instance
+        instance = cls._instance
+        if instance is None:
+            instance = super().__new__(cls)
+            instance.reload()
+            cls._instance = instance
+        return instance
 
     def reload(self) -> None:
         """Перечитать pyproject.toml и .env из текущей папки."""
@@ -85,7 +87,10 @@ def _read_tool_section(pyproject: Path) -> dict[str, Any]:
         return {}
     with pyproject.open("rb") as stream:
         document = tomllib.load(stream)
-    return document.get(PYPROJECT_TOOL_TABLE, {}).get(TOOL_SECTION, {})
+    section: dict[str, Any] = document.get(PYPROJECT_TOOL_TABLE, {}).get(
+        TOOL_SECTION, {}
+    )
+    return section
 
 
 def _load_dotenv(dotenv: Path) -> None:

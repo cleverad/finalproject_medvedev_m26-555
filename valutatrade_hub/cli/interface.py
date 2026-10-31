@@ -7,6 +7,7 @@
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Final
 
 from prettytable import PrettyTable
 
@@ -53,8 +54,8 @@ MSG_SELL_VALUE = "Оценочная выручка: {value} {base}"
 COLUMN_CURRENCY = "Валюта"
 COLUMN_BALANCE = "Баланс"
 COLUMN_VALUE = "Стоимость, {base}"
-ALIGN_LEFT = "l"
-ALIGN_RIGHT = "r"
+ALIGN_LEFT: Final = "l"
+ALIGN_RIGHT: Final = "r"
 
 
 class Session:
@@ -263,8 +264,8 @@ def cmd_help(session: Session, options: Options) -> None:
     """Показать справку по всем командам или по одной."""
     name = options.get("command")
     if name is None:
-        for command in COMMANDS.values():
-            print(command.usage)
+        for known in COMMANDS.values():
+            print(known.usage)
         return
     command = COMMANDS.get(name)
     if command is None:

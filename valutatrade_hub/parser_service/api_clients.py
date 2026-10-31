@@ -33,7 +33,9 @@ __all__ = [
 logger = logging.getLogger(PARSER_LOGGER)
 
 COINGECKO_SOURCE = "CoinGecko"
+COINGECKO_ALIAS = "coingecko"
 EXCHANGERATE_SOURCE = "ExchangeRate-API"
+EXCHANGERATE_ALIAS = "exchangerate"
 
 ETAG_HEADER = "ETag"
 MS_IN_SECOND = 1000
@@ -69,7 +71,11 @@ class ResponseMeta:
 
 @dataclass(frozen=True)
 class Observation:
-    """Один замер курса: сам курс, идентификатор у источника и данные ответа."""
+    """Один замер курса: сам курс, идентификатор у источника и данные ответа.
+
+    updated_at курса здесь это время источника, время получения проставляет
+    хранилище при записи снимка.
+    """
 
     rate: Rate
     raw_id: str
@@ -77,9 +83,14 @@ class Observation:
 
 
 class BaseApiClient(ABC):
-    """Общее для клиентов: GET с таймаутом, разбор ошибок, журнал без ключа."""
+    """Общее для клиентов: GET с таймаутом, разбор ошибок, журнал без ключа.
+
+    source это имя источника в снимке и истории, alias это короткое имя для
+    выбора источника в команде update-rates.
+    """
 
     source: str
+    alias: str
 
     def __init__(self, config: ParserConfig) -> None:
         self._config = config
@@ -178,6 +189,7 @@ class CoinGeckoClient(BaseApiClient):
     """Курсы криптовалют к базовой валюте с CoinGecko, без ключа."""
 
     source = COINGECKO_SOURCE
+    alias = COINGECKO_ALIAS
 
     def fetch_rates(self) -> dict[str, Observation]:
         config = self._config
@@ -207,6 +219,7 @@ class ExchangeRateApiClient(BaseApiClient):
     """Курсы фиатных валют к базовой с ExchangeRate-API v6, по ключу."""
 
     source = EXCHANGERATE_SOURCE
+    alias = EXCHANGERATE_ALIAS
 
     def fetch_rates(self) -> dict[str, Observation]:
         config = self._config

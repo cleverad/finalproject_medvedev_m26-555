@@ -7,12 +7,13 @@ import pytest
 from valutatrade_hub.core import usecases, utils
 from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
+    InsufficientFundsError,
     InvalidPasswordError,
     RateNotAvailableError,
     UsernameTakenError,
     UserNotFoundError,
 )
-from valutatrade_hub.core.models import STUB_SOURCE, RatesSnapshot
+from valutatrade_hub.core.models import BUY_ACTION, STUB_SOURCE, RatesSnapshot
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 
@@ -209,3 +210,103 @@ class TestGetRate:
         rate = usecases.get_rate("EUR", "USD")
         assert rate.value == Decimal("1.0786")
         assert rate.source == STUB_SOURCE
+
+
+def stored_wallets(workdir, user_id=1):
+    """Прочитать кошельки пользователя прямо из portfolios.json."""
+    records = json.loads((workdir / "data" / "portfolios.json").read_text())
+    return next(r["wallets"] for r in records if r["user_id"] == user_id)
+
+
+class TestBuy:
+    def test_debits_usd_and_credits_currency(self, rates, workdir):
+        alice = usecases.register("alice", "1234")
+        result = usecases.buy(alice.user_id, "BTC", 0.05)
+        assert result.action == BUY_ACTION
+        assert result.username == "alice"
+        assert result.currency.code == "BTC"
+        assert result.amount == Decimal("0.05")
+        assert result.rate.value == Decimal("59300.0")
+        assert (result.before, result.after) == (0, Decimal("0.05"))
+        assert result.base.code == "USD"
+        assert (result.base_before, result.base_after) == (10000, Decimal(7035))
+        assert result.value == Decimal("2965.00")
+        assert stored_wallets(workdir) == {
+            "USD": {"balance": 7035.0},
+            "BTC": {"balance": 0.05},
+        }
+
+    def test_second_purchase_accumulates(self, rates, workdir):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        result = usecases.buy(alice.user_id, "BTC", 0.01)
+        assert (result.before, result.after) == (Decimal("0.05"), Decimal("0.06"))
+        assert result.base_after == Decimal(6442)
+
+    def test_cost_is_exact_to_the_amount_step(self, rates):
+        alice = usecases.register("alice", "1234")
+        result = usecases.buy(alice.user_id, "BTC", Decimal("0.00000001"))
+        assert result.value == Decimal("0.00059300")
+        assert result.base_after == Decimal("9999.99940700")
+
+    def test_trade_worth_less_than_a_step_is_rejected(self, workdir):
+        alice = usecases.register("alice", "1234")
+        message = usecases.MSG_TRADE_TOO_SMALL.format(step="0.00000001", code="USD")
+        with pytest.raises(ValueError, match=message):
+            usecases.buy(alice.user_id, "RUB", Decimal("0.00000001"))
+        assert stored_wallets(workdir) == {"USD": {"balance": 10000.0}}
+
+    def test_insufficient_usd_changes_nothing(self, rates, workdir):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises(InsufficientFundsError) as info:
+            usecases.buy(alice.user_id, "BTC", 1)
+        assert str(info.value) == (
+            "Недостаточно средств: доступно 10000.00 USD, требуется 59300.00 USD"
+        )
+        assert stored_wallets(workdir) == {"USD": {"balance": 10000.0}}
+
+    @pytest.mark.parametrize("amount", [0, -0.01, "0.05", float("nan")])
+    def test_bad_amount(self, rates, amount):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises((ValueError, TypeError)):
+            usecases.buy(alice.user_id, "BTC", amount)
+
+    def test_amount_is_cut_to_the_currency_step(self, rates):
+        alice = usecases.register("alice", "1234")
+        result = usecases.buy(alice.user_id, "BTC", 0.123456789)
+        assert result.amount == Decimal("0.12345678")
+        assert result.after == Decimal("0.12345678")
+
+    def test_amount_below_the_step_is_not_positive(self, rates):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises(ValueError, match="положительным"):
+            usecases.buy(alice.user_id, "EUR", 1e-9)
+
+    def test_base_currency_is_not_tradable(self, rates):
+        alice = usecases.register("alice", "1234")
+        message = usecases.MSG_BASE_CURRENCY_TRADE.format(code="USD")
+        with pytest.raises(ValueError, match=message):
+            usecases.buy(alice.user_id, "USD", 100)
+
+    def test_unknown_currency(self, rates):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises(CurrencyNotFoundError):
+            usecases.buy(alice.user_id, "ABC", 1)
+
+    def test_rate_not_available(self, rates):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises(RateNotAvailableError) as info:
+            usecases.buy(alice.user_id, "ETH", 1)
+        assert str(info.value) == "Не удалось получить курс для ETH→USD"
+
+    def test_stale_rate_blocks_the_trade(self, rates, monkeypatch):
+        alice = usecases.register("alice", "1234")
+        ttl = SettingsLoader().get("rates_ttl_seconds")
+        later = UPDATED_AT + timedelta(seconds=ttl + 1)
+        monkeypatch.setattr(utils, "utc_now", lambda: later)
+        with pytest.raises(RateNotAvailableError):
+            usecases.buy(alice.user_id, "BTC", 0.05)
+
+    def test_unknown_user(self, rates):
+        with pytest.raises(UserNotFoundError):
+            usecases.buy(42, "BTC", 0.05)

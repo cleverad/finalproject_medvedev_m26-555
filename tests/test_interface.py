@@ -188,6 +188,58 @@ class TestCommands:
         )
         assert "Неизвестная базовая валюта 'ABC'" in out
 
+    def test_buy_prints_result_and_changes(self, workdir, capsys, monkeypatch):
+        updated_at = datetime(2025, 10, 9, 0, 3, 22, tzinfo=UTC)
+        btc_usd = Rate("BTC", "USD", Decimal(59300), updated_at, "CoinGecko")
+        DatabaseManager().save_rates(RatesSnapshot({btc_usd.key: btc_usd}, updated_at))
+        monkeypatch.setattr(utils, "utc_now", lambda: updated_at)
+        out = run_lines(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                "buy --currency btc --amount 0.05",
+            ],
+            capsys,
+        ).splitlines()
+        assert out[-5:] == [
+            "Покупка выполнена: 0.0500 BTC по курсу 59300.00 USD/BTC",
+            "Изменения в портфеле:",
+            "- BTC: было 0.0000 → стало 0.0500",
+            "- USD: было 10000.00 → стало 7035.00",
+            "Оценочная стоимость покупки: 2,965.00 USD",
+        ]
+
+    @pytest.mark.parametrize(
+        ("line", "message"),
+        [
+            (
+                "buy --currency BTC --amount abc",
+                "'amount' должен быть положительным числом",
+            ),
+            (
+                "buy --currency BTC --amount -1",
+                "'amount' должен быть положительным числом",
+            ),
+            ("buy --currency USD --amount 1", "Нельзя торговать базовой валютой USD"),
+            ("buy --currency ABC --amount 1", "Неизвестная валюта 'ABC'"),
+            ("buy --currency BTC --amount 1e30", "Сумма слишком велика для BTC"),
+        ],
+    )
+    def test_buy_errors(self, workdir, capsys, line, message):
+        out = run_lines(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                line,
+            ],
+            capsys,
+        )
+        assert message in out
+
+    def test_buy_requires_login(self, workdir, capsys):
+        out = run_lines(["buy --currency BTC --amount 1"], capsys)
+        assert out.strip() == "Сначала выполните login"
+
     def test_get_rate_prints_rate_time_and_inverse(self, workdir, capsys, monkeypatch):
         updated_at = datetime(2025, 10, 9, 0, 3, 22, tzinfo=UTC)
         btc_usd = Rate("BTC", "USD", Decimal("59337.21"), updated_at, "CoinGecko")

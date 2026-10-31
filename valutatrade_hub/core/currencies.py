@@ -1,12 +1,13 @@
 """Валюты: абстрактный Currency, наследники Fiat и Crypto, реестр по коду.
 
-Точность хранения сумм задаётся видом валюты: у фиата два знака, у крипты восемь.
-Реестр принимает только коды в верхнем регистре, приведение к нему делает CLI.
+Суммы во всех валютах хранятся с общим шагом AMOUNT_STEP, а показываются с точностью
+вида валюты: у фиата два знака, у крипты четыре. Реестр принимает только коды
+в верхнем регистре, приведение к нему делает CLI.
 """
 
 import re
 from abc import ABC, abstractmethod
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError
@@ -27,15 +28,17 @@ MSG_BAD_CODE = (
     "Код валюты должен быть из 2–5 заглавных латинских букв, получен {code!r}"
 )
 MSG_EMPTY_NAME = "Имя валюты не может быть пустым"
-MSG_TOO_PRECISE = (
-    "Сумма в {code} не может иметь больше {precision} знаков после запятой"
-)
+MSG_AMOUNT_TOO_LARGE = "Сумма слишком велика для {code}"
+
+# Общий шаг учёта для всех валют, как на биржах: цент и сатоши это точность
+# показа, а не хранения. Стоимость сделки считается без промежуточных округлений.
+AMOUNT_DECIMALS = 8
+AMOUNT_STEP = Decimal(1).scaleb(-AMOUNT_DECIMALS)
 
 
 class Currency(ABC):
-    """Валюта: код, имя и точность, с которой хранятся суммы в ней."""
+    """Валюта: код, имя и число знаков, с которым суммы в ней показываются."""
 
-    precision: int
     display_precision: int
 
     def __init__(self, name: str, code: str) -> None:
@@ -56,46 +59,62 @@ class Currency(ABC):
         """Вернуть строку для вывода и логов."""
 
     def normalize_amount(self, value: object) -> Decimal:
-        """Вернуть сумму в этой валюте как Decimal с точностью хранения.
+        """Вернуть сумму как Decimal с шагом учёта AMOUNT_STEP.
 
-        Лишние знаки это ошибка, а не молчаливое округление: 0.123 USD не бывает.
+        Знаки мельче шага отбрасываются к нулю, поэтому сумма никогда не
+        становится больше введённой.
 
         Raises:
             TypeError: если значение не число.
-            ValueError: если значение не конечное или точнее, чем допускает валюта.
+            ValueError: если значение не конечное или не помещается в Decimal.
         """
-        amount = utils.to_decimal(value)
-        if amount != amount.quantize(self.step):
-            raise ValueError(
-                MSG_TOO_PRECISE.format(code=self.code, precision=self.precision)
-            )
-        return amount.quantize(self.step)
+        return self._quantize(utils.to_decimal(value), ROUND_DOWN)
 
-    def round_amount(self, value: Decimal, rounding: str = ROUND_HALF_UP) -> Decimal:
-        """Округлить вычисленную сумму до точности валюты заданным способом.
+    def positive_amount(self, value: object) -> Decimal:
+        """Вернуть сумму операции: как normalize_amount, но строго больше нуля.
 
-        Для ввода пользователя есть normalize_amount, он лишние знаки отвергает.
+        Raises:
+            TypeError: если значение не число.
+            ValueError: если сумма не положительная, в том числе мельче шага учёта.
         """
-        return value.quantize(self.step, rounding=rounding)
+        amount = self.normalize_amount(value)
+        if amount <= 0:
+            raise ValueError(utils.MSG_AMOUNT_NOT_POSITIVE)
+        return amount
 
-    @property
-    def step(self) -> Decimal:
-        """Минимальная сумма в валюте: 0.01 для фиата, 0.00000001 для крипты."""
-        return Decimal(1).scaleb(-self.precision)
+    def round_amount(self, value: Decimal) -> Decimal:
+        """Округлить вычисленную сумму к ближайшему шагу учёта.
+
+        Для ввода пользователя есть normalize_amount, он отбрасывает вниз.
+
+        Raises:
+            ValueError: если значение не помещается в Decimal.
+        """
+        return self._quantize(value, ROUND_HALF_UP)
+
+    def _quantize(self, value: Decimal, rounding: str) -> Decimal:
+        try:
+            return value.quantize(AMOUNT_STEP, rounding=rounding)
+        except InvalidOperation:
+            raise ValueError(MSG_AMOUNT_TOO_LARGE.format(code=self.code)) from None
 
     def format_amount(self, amount: Decimal) -> str:
-        """Записать сумму с точностью вывода: 150.00 для фиата, 0.0500 для крипты."""
-        return f"{amount:.{self.display_precision}f}"
+        """Записать сумму не короче точности показа и не длиннее шага учёта.
+
+        Хвостовые нули убираются: 150.00, 0.0500, 0.00000001.
+        """
+        text = f"{amount:.{AMOUNT_DECIMALS}f}"
+        return utils.trim_zeros(text, self.display_precision)
 
     def format_value(self, amount: Decimal) -> str:
         """Записать стоимость с разделителем тысяч: 3,329.00."""
-        return f"{amount:,.{self.display_precision}f}"
+        text = f"{amount:,.{AMOUNT_DECIMALS}f}"
+        return utils.trim_zeros(text, self.display_precision)
 
 
 class FiatCurrency(Currency):
     """Государственная валюта с указанием страны или зоны эмиссии."""
 
-    precision = 2
     display_precision = 2
 
     def __init__(self, name: str, code: str, issuing_country: str) -> None:
@@ -109,7 +128,6 @@ class FiatCurrency(Currency):
 class CryptoCurrency(Currency):
     """Криптовалюта с алгоритмом консенсуса и последней известной капитализацией."""
 
-    precision = 8
     display_precision = 4
 
     def __init__(self, name: str, code: str, algorithm: str, market_cap: float) -> None:

@@ -18,6 +18,7 @@ __all__ = [
     "PortfolioValuation",
     "Rate",
     "RatesSnapshot",
+    "TradeResult",
     "User",
     "Wallet",
 ]
@@ -37,6 +38,8 @@ MSG_BAD_PAIR_KEY = "Ключ пары должен быть вида BTC_USD, п
 PAIR_SEPARATOR = "_"
 IDENTITY_SOURCE = "identity"
 STUB_SOURCE = "stub"
+BUY_ACTION = "BUY"
+SELL_ACTION = "SELL"
 CROSS_SOURCE_SEPARATOR = "+"
 
 # Фиксированные курсы на случай, когда снимка rates.json ещё нет.
@@ -184,7 +187,7 @@ class User:
 class Wallet:
     """Кошелёк пользователя в одной валюте.
 
-    Баланс хранится как Decimal с точностью валюты, поэтому остаток после
+    Баланс хранится как Decimal с общим шагом учёта, поэтому остаток после
     нескольких продаж сходится ровно, без двоичного хвоста float.
     """
 
@@ -194,7 +197,7 @@ class Wallet:
         Raises:
             CurrencyNotFoundError: если кода нет в реестре валют.
             TypeError: если баланс не число.
-            ValueError: если баланс отрицательный, не конечный или точнее валюты.
+            ValueError: если баланс отрицательный или не конечный.
         """
         self._currency = get_currency(currency_code)
         self.balance = balance
@@ -220,7 +223,7 @@ class Wallet:
 
         Raises:
             TypeError: если значение не число.
-            ValueError: если значение отрицательное, не конечное или точнее валюты.
+            ValueError: если значение отрицательное или не конечное.
         """
         amount = self._currency.normalize_amount(value)
         if amount < 0:
@@ -232,19 +235,19 @@ class Wallet:
 
         Raises:
             TypeError: если сумма не число.
-            ValueError: если сумма не положительная или точнее валюты.
+            ValueError: если сумма не положительная.
         """
-        self._balance += self._positive(amount)
+        self._balance += self._currency.positive_amount(amount)
 
     def withdraw(self, amount: object) -> None:
         """Снять положительную сумму, не больше баланса.
 
         Raises:
             TypeError: если сумма не число.
-            ValueError: если сумма не положительная или точнее валюты.
+            ValueError: если сумма не положительная.
             InsufficientFundsError: если на кошельке меньше, чем требуется.
         """
-        required = self._positive(amount)
+        required = self._currency.positive_amount(amount)
         if required > self._balance:
             raise InsufficientFundsError(
                 available=self._currency.format_amount(self._balance),
@@ -269,12 +272,6 @@ class Wallet:
             KeyError: если в записи нет баланса.
         """
         return cls(currency_code, data["balance"])
-
-    def _positive(self, amount: object) -> Decimal:
-        value = self._currency.normalize_amount(amount)
-        if value <= 0:
-            raise ValueError(utils.MSG_AMOUNT_NOT_POSITIVE)
-        return value
 
 
 @dataclass(frozen=True)
@@ -491,7 +488,7 @@ class Portfolio:
     def get_values(
         self, base_currency: str = BASE_CURRENCY, rates: RatesSnapshot | None = None
     ) -> dict[str, Decimal]:
-        """Вернуть стоимость каждого кошелька в базовой валюте, по её точности.
+        """Вернуть стоимость каждого кошелька в базовой валюте с шагом учёта.
 
         Без снимка курсов берётся заглушка EXCHANGE_RATES.
 
@@ -573,3 +570,24 @@ class PortfolioValuation:
     base: Currency
     values: dict[str, Decimal]
     total: Decimal
+
+
+@dataclass(frozen=True)
+class TradeResult:
+    """Итог сделки для вывода и журнала.
+
+    Курс всегда из торгуемой валюты в базовую, value это стоимость покупки или
+    выручка от продажи в базовой валюте.
+    """
+
+    action: str
+    username: str
+    currency: Currency
+    amount: Decimal
+    rate: Rate
+    before: Decimal
+    after: Decimal
+    base: Currency
+    base_before: Decimal
+    base_after: Decimal
+    value: Decimal

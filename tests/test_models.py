@@ -175,11 +175,19 @@ class TestWallet:
         assert Wallet("USD").get_balance_info() == "USD: 0.00"
         assert Wallet("BTC").get_balance_info() == "BTC: 0.0000"
 
-    def test_balance_is_decimal_at_storage_precision(self):
+    def test_balance_is_decimal_at_the_amount_step(self):
         wallet = Wallet("USD", 1200.0)
         assert wallet.balance == Decimal(1200)
         assert isinstance(wallet.balance, Decimal)
-        assert str(wallet.balance) == "1200.00"
+        assert str(wallet.balance) == "1200.00000000"
+
+    @pytest.mark.parametrize(
+        "balance", ["0.00000001", "10000.12345678", "67108863.12345678", "0.1"]
+    )
+    def test_balance_survives_json_number_round_trip(self, balance):
+        wallet = Wallet("USD", Decimal(balance))
+        data = json.loads(json.dumps(wallet.to_dict()))
+        assert Wallet.from_dict("USD", data).balance == Decimal(balance)
         assert str(Wallet("BTC", 0.05).balance) == "0.05000000"
 
     def test_deposit_and_withdraw(self):
@@ -222,10 +230,15 @@ class TestWallet:
         with pytest.raises(TypeError):
             Wallet("USD", 10).deposit(amount)
 
-    def test_too_precise_amount_is_rejected(self):
+    def test_finer_than_the_step_is_cut(self):
         wallet = Wallet("USD", 10)
-        with pytest.raises(ValueError, match="2 знаков"):
-            wallet.deposit(0.001)
+        wallet.deposit(0.000000019)
+        assert wallet.balance == Decimal("10.00000001")
+
+    def test_amount_below_the_step_is_not_positive(self):
+        wallet = Wallet("USD", 10)
+        with pytest.raises(ValueError, match="положительным"):
+            wallet.deposit(1e-9)
         assert wallet.balance == 10
 
     def test_setter_rejects_negative_and_bad_types(self):
@@ -477,11 +490,11 @@ class TestPortfolio:
         values = portfolio.get_values("USD", rates)
         assert values == {
             "USD": Decimal("1500.00"),
-            "BTC": Decimal("2966.86"),
+            "BTC": Decimal("2966.8605"),
             "EUR": Decimal("215.72"),
         }
         total = portfolio.get_total_value("USD", rates)
-        assert total == Decimal("4682.58")
+        assert total == Decimal("4682.5805")
         assert total == sum(values.values())
 
     def test_values_in_another_base(self):
@@ -489,13 +502,13 @@ class TestPortfolio:
         rates = RatesSnapshot.from_dict(RATES_JSON)
         values = portfolio.get_values("EUR", rates)
         assert values["EUR"] == Decimal("200.00")
-        assert values["USD"] == Decimal("1390.69")
-        assert values["BTC"] == Decimal("2750.66")
+        assert values["USD"] == Decimal("1390.69163731")
+        assert values["BTC"] == Decimal("2750.65872427")
 
-    def test_total_of_empty_portfolio_is_zero_at_base_precision(self):
+    def test_total_of_empty_portfolio_is_zero_at_the_amount_step(self):
         total = Portfolio(1).get_total_value("USD", RatesSnapshot({}))
         assert total == 0
-        assert str(total) == "0.00"
+        assert str(total) == "0E-8"
 
     def test_unknown_base_currency(self):
         with pytest.raises(CurrencyNotFoundError, match="'ABC'"):
@@ -547,7 +560,7 @@ class TestPortfolioValuation:
         assert valuation.portfolio is portfolio
         assert valuation.base.code == "USD"
         assert valuation.values == portfolio.get_values("USD", rates)
-        assert valuation.total == Decimal("4682.58")
+        assert valuation.total == Decimal("4682.5805")
         assert valuation.total == portfolio.get_total_value("USD", rates)
 
     def test_without_rates_uses_the_stub(self, monkeypatch):

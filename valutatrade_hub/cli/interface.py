@@ -13,7 +13,7 @@ from prettytable import PrettyTable
 from valutatrade_hub.core import usecases, utils
 from valutatrade_hub.core.currencies import BASE_CURRENCY, supported_codes
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError, ValutaTradeError
-from valutatrade_hub.core.models import User
+from valutatrade_hub.core.models import TradeResult, User
 
 __all__ = ["COMMANDS", "Command", "Session", "execute", "parse_options", "run"]
 
@@ -43,6 +43,10 @@ MSG_RATE = "Курс {from_code}→{to_code}: {rate} (обновлено: {updat
 MSG_INVERSE_RATE = "Обратный курс {from_code}→{to_code}: {rate}"
 MSG_SUPPORTED_CODES = "Поддерживаемые коды: {codes}"
 CODES_SEPARATOR = ", "
+MSG_BOUGHT = "Покупка выполнена: {amount} {code} по курсу {rate} {base}/{code}"
+MSG_CHANGES = "Изменения в портфеле:"
+MSG_CHANGE_LINE = "- {code}: было {before} → стало {after}"
+MSG_BUY_VALUE = "Оценочная стоимость покупки: {value} {base}"
 COLUMN_CURRENCY = "Валюта"
 COLUMN_BALANCE = "Баланс"
 COLUMN_VALUE = "Стоимость, {base}"
@@ -169,6 +173,44 @@ def cmd_show_portfolio(session: Session, options: Options) -> None:
     print(MSG_TOTAL.format(total=total, base=base))
 
 
+def cmd_buy(session: Session, options: Options) -> None:
+    """Купить валюту за базовую и показать изменения в портфеле."""
+    user = session.require()
+    code = utils.normalize_currency_code(options["currency"])
+    amount = utils.parse_amount(options["amount"])
+    result = usecases.buy(user.user_id, code, amount)
+    print(
+        MSG_BOUGHT.format(
+            amount=result.currency.format_amount(result.amount),
+            code=result.currency.code,
+            rate=utils.format_rate(result.rate.value),
+            base=result.base.code,
+        )
+    )
+    print_changes(result)
+    value = result.base.format_value(result.value)
+    print(MSG_BUY_VALUE.format(value=value, base=result.base.code))
+
+
+def print_changes(result: TradeResult) -> None:
+    """Напечатать, как сделка изменила оба кошелька."""
+    print(MSG_CHANGES)
+    print(
+        MSG_CHANGE_LINE.format(
+            code=result.currency.code,
+            before=result.currency.format_amount(result.before),
+            after=result.currency.format_amount(result.after),
+        )
+    )
+    print(
+        MSG_CHANGE_LINE.format(
+            code=result.base.code,
+            before=result.base.format_amount(result.base_before),
+            after=result.base.format_amount(result.base_after),
+        )
+    )
+
+
 def cmd_get_rate(session: Session, options: Options) -> None:
     """Показать курс пары, время обновления и обратный курс."""
     from_code = utils.normalize_currency_code(options["from"])
@@ -227,6 +269,12 @@ COMMANDS: dict[str, Command] = {
         cmd_show_portfolio,
         "show-portfolio [--base <str>]",
         optional=("base",),
+        requires_login=True,
+    ),
+    "buy": Command(
+        cmd_buy,
+        "buy --currency <str> --amount <float>",
+        required=("currency", "amount"),
         requires_login=True,
     ),
     "get-rate": Command(

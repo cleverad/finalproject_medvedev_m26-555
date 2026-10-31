@@ -1,4 +1,4 @@
-from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
+from decimal import Decimal
 
 import pytest
 
@@ -47,9 +47,14 @@ class TestInvariants:
     def test_name_is_stripped(self):
         assert FiatCurrency("  Euro ", "EUR", "Eurozone").name == "Euro"
 
-    def test_precision_by_kind(self):
-        assert (FiatCurrency.precision, FiatCurrency.display_precision) == (2, 2)
-        assert (CryptoCurrency.precision, CryptoCurrency.display_precision) == (8, 4)
+    def test_display_precision_by_kind(self):
+        assert FiatCurrency.display_precision == 2
+        assert CryptoCurrency.display_precision == 4
+
+    def test_one_amount_step_for_all_currencies(self):
+        step = currencies.AMOUNT_STEP
+        assert step == Decimal("0.00000001")
+        assert currencies.AMOUNT_DECIMALS == 8
 
 
 class TestRegistry:
@@ -98,7 +103,10 @@ class TestAmounts:
             ("USD", 150, "150.00"),
             ("USD", 0.5, "0.50"),
             ("BTC", 0.05, "0.0500"),
-            ("BTC", 0.00000001, "0.0000"),
+            ("BTC", 0.00000001, "0.00000001"),
+            ("BTC", 0.123, "0.1230"),
+            ("BTC", Decimal("0.12345678"), "0.12345678"),
+            ("BTC", 0, "0.0000"),
             ("EUR", Decimal(200), "200.00"),
         ],
     )
@@ -106,15 +114,27 @@ class TestAmounts:
         currency = get_currency(code)
         amount = currency.normalize_amount(value)
         assert amount == Decimal(str(value))
-        assert amount.as_tuple().exponent == -currency.precision
+        assert amount.as_tuple().exponent == -currencies.AMOUNT_DECIMALS
         assert currency.format_amount(amount) == text
 
     @pytest.mark.parametrize(
-        ("code", "value"), [("USD", 0.123), ("BTC", 1e-9), ("RUB", Decimal("1.001"))]
+        ("code", "value", "text"),
+        [
+            ("USD", 0.129, "0.12900000"),
+            ("USD", 0.123456789, "0.12345678"),
+            ("BTC", 1e-9, "0E-8"),
+            ("BTC", 0.123456789, "0.12345678"),
+            ("RUB", Decimal("1.000000019"), "1.00000001"),
+        ],
     )
-    def test_too_precise_is_an_error_not_rounding(self, code, value):
-        with pytest.raises(ValueError, match="знаков после запятой"):
-            get_currency(code).normalize_amount(value)
+    def test_finer_than_step_is_cut_towards_zero(self, code, value, text):
+        assert str(get_currency(code).normalize_amount(value)) == text
+
+    def test_too_large_for_decimal(self):
+        with pytest.raises(ValueError, match="слишком велика"):
+            get_currency("BTC").normalize_amount(Decimal("1e30"))
+        with pytest.raises(ValueError, match="слишком велика"):
+            get_currency("BTC").round_amount(Decimal("1e30"))
 
     @pytest.mark.parametrize(
         ("code", "value", "text"),
@@ -122,8 +142,9 @@ class TestAmounts:
             ("USD", "3329", "3,329.00"),
             ("USD", "2965", "2,965.00"),
             ("USD", "150", "150.00"),
-            ("USD", "1234567.891", "1,234,567.89"),
+            ("USD", "1234567.891", "1,234,567.891"),
             ("BTC", "12345.6789", "12,345.6789"),
+            ("BTC", "1000.00000001", "1,000.00000001"),
         ],
     )
     def test_format_value_with_thousands_separator(self, code, value, text):
@@ -132,6 +153,14 @@ class TestAmounts:
     def test_negative_amount_is_representable(self):
         assert get_currency("USD").normalize_amount(-1) == Decimal("-1.00")
 
+    def test_positive_amount(self):
+        assert get_currency("BTC").positive_amount(0.05) == Decimal("0.05000000")
+
+    @pytest.mark.parametrize("value", [0, -1, Decimal("-0.01"), 1e-9])
+    def test_positive_amount_rejects_zero_and_negative(self, value):
+        with pytest.raises(ValueError, match="'amount' должен быть положительным"):
+            get_currency("USD").positive_amount(value)
+
     def test_non_number_is_a_type_error(self):
         with pytest.raises(TypeError):
             get_currency("USD").normalize_amount("1")
@@ -139,21 +168,14 @@ class TestAmounts:
 
 class TestRounding:
     @pytest.mark.parametrize(
-        ("code", "value", "rounding", "text"),
+        ("code", "value", "text"),
         [
-            ("USD", "2966.8605", ROUND_HALF_UP, "2966.86"),
-            ("USD", "0.005", ROUND_HALF_UP, "0.01"),
-            ("USD", "0.001", ROUND_UP, "0.01"),
-            ("USD", "0.009", ROUND_DOWN, "0.00"),
-            ("BTC", "0.123456789", ROUND_HALF_UP, "0.12345679"),
+            ("USD", "2966.8605", "2966.86050000"),
+            ("USD", "0.000000005", "1E-8"),
+            ("USD", "0.000000004", "0E-8"),
+            ("BTC", "0.123456789", "0.12345679"),
+            ("BTC", "0.123456785", "0.12345679"),
         ],
     )
-    def test_round_amount(self, code, value, rounding, text):
-        assert str(get_currency(code).round_amount(Decimal(value), rounding)) == text
-
-    def test_default_rounding_is_half_up(self):
-        assert get_currency("USD").round_amount(Decimal("0.125")) == Decimal("0.13")
-
-    def test_step(self):
-        assert get_currency("USD").step == Decimal("0.01")
-        assert get_currency("BTC").step == Decimal("0.00000001")
+    def test_round_amount_to_the_nearest_step(self, code, value, text):
+        assert str(get_currency(code).round_amount(Decimal(value))) == text

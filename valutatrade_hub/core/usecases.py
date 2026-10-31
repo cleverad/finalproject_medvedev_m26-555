@@ -9,11 +9,13 @@ from valutatrade_hub.core import utils
 from valutatrade_hub.core.currencies import (
     AMOUNT_STEP,
     BASE_CURRENCY,
+    CryptoCurrency,
     Currency,
     get_currency,
 )
 from valutatrade_hub.core.decorators import log_action
 from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
     CurrencyNotFoundError,
     InvalidPasswordError,
     RateNotAvailableError,
@@ -34,12 +36,27 @@ from valutatrade_hub.core.models import (
 )
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.parser_service.updater import UpdateResult, refresh_rates
 
 MSG_UNKNOWN_BASE = "Неизвестная базовая валюта '{code}'"
 MSG_BASE_CURRENCY_TRADE = "Нельзя торговать базовой валютой {code}"
 MSG_TRADE_TOO_SMALL = "Стоимость сделки меньше {step} {code}"
+MSG_EMPTY_CACHE = (
+    "Локальный кеш курсов пуст. Выполните 'update-rates', чтобы загрузить данные."
+)
+MSG_NOT_IN_CACHE = "Курс для '{code}' не найден в кеше."
+MSG_BAD_TOP = "'top' должен быть положительным целым числом"
 
-__all__ = ["buy", "get_rate", "login", "register", "sell", "show_portfolio"]
+__all__ = [
+    "buy",
+    "get_rate",
+    "login",
+    "register",
+    "sell",
+    "show_portfolio",
+    "show_rates",
+    "update_rates",
+]
 
 
 def register(username: str, password: str) -> User:
@@ -87,7 +104,7 @@ def show_portfolio(
     """Оценить портфель пользователя в базовой валюте по снимку rates.json.
 
     Срок годности курсов здесь не проверяется: показ портфеля не сделка.
-    Пока rates.json нет, берётся заглушка EXCHANGE_RATES.
+    Пока rates.json нет, оценить можно только базовую валюту.
 
     Raises:
         UserNotFoundError: если пользователя с таким id нет.
@@ -100,7 +117,7 @@ def show_portfolio(
         get_currency(base_currency)
     except CurrencyNotFoundError:
         raise ValueError(MSG_UNKNOWN_BASE.format(code=base_currency)) from None
-    return portfolio.get_valuation(base_currency, db.get_rates())
+    return portfolio.get_valuation(base_currency, _snapshot(db))
 
 
 def _user_portfolio(db: DatabaseManager, user_id: int) -> tuple[User, Portfolio]:
@@ -117,23 +134,45 @@ def _user_portfolio(db: DatabaseManager, user_id: int) -> tuple[User, Portfolio]
 
 
 def get_rate(from_code: str, to_code: str) -> Rate:
-    """Вернуть свежий курс пары по снимку rates.json.
+    """Вернуть свежий курс пары, при устаревшем снимке обновить его через парсер.
 
-    Курс старше rates_ttl_seconds считается отсутствующим. Пока rates.json нет,
-    берётся заглушка EXCHANGE_RATES.
+    Курс старше rates_ttl_seconds или отсутствующий в снимке считается
+    устаревшим: тогда запускается обновление и снимок перечитывается.
 
     Raises:
         CurrencyNotFoundError: если один из кодов не в реестре.
-        RateNotAvailableError: если курса нет в снимке или он устарел.
+        ApiRequestError: если обновление не удалось, или курса нет и после
+            него, а источники сообщали об ошибках.
+        RateNotAvailableError: если курса нет и после удачного обновления.
     """
     get_currency(from_code)
     get_currency(to_code)
-    now = utils.utc_now()
-    rates = DatabaseManager().get_rates() or RatesSnapshot.stub(now)
-    rate = rates.get_rate(from_code, to_code)
-    if not rate.is_fresh(SettingsLoader().get("rates_ttl_seconds"), now):
-        raise RateNotAvailableError(from_code=from_code, to_code=to_code)
-    return rate
+    db = DatabaseManager()
+    rate = _fresh_rate(db, from_code, to_code)
+    if rate is not None:
+        return rate
+    result = refresh_rates()
+    rate = _fresh_rate(db, from_code, to_code)
+    if rate is not None:
+        return rate
+    if result.errors:
+        raise ApiRequestError(reason=result.describe_errors())
+    raise RateNotAvailableError(from_code=from_code, to_code=to_code)
+
+
+def _snapshot(db: DatabaseManager) -> RatesSnapshot:
+    """Вернуть снимок rates.json, пустой, если файла ещё нет."""
+    return db.get_rates() or RatesSnapshot({})
+
+
+def _fresh_rate(db: DatabaseManager, from_code: str, to_code: str) -> Rate | None:
+    """Вернуть курс из снимка, если он есть и не старше TTL, иначе None."""
+    try:
+        rate = _snapshot(db).get_rate(from_code, to_code)
+    except RateNotAvailableError:
+        return None
+    ttl = SettingsLoader().get("rates_ttl_seconds")
+    return rate if rate.is_fresh(ttl, utils.utc_now()) else None
 
 
 @log_action(BUY_ACTION)
@@ -259,3 +298,58 @@ def _trade_value(amount: Decimal, rate: Rate, base: Currency) -> Decimal:
         step = base.format_amount(AMOUNT_STEP)
         raise ValueError(MSG_TRADE_TOO_SMALL.format(step=step, code=base.code))
     return value
+
+
+def update_rates(source: str | None = None) -> UpdateResult:
+    """Обновить кеш курсов из всех источников или из одного по псевдониму.
+
+    Raises:
+        ValueError: если псевдоним источника неизвестен.
+        ApiRequestError: если не ответил ни один источник.
+    """
+    return refresh_rates(None if source is None else (source,))
+
+
+def show_rates(
+    currency: str | None = None,
+    top: int | None = None,
+    base_currency: str = BASE_CURRENCY,
+) -> RatesSnapshot:
+    """Вернуть курсы из кеша к базовой валюте с фильтрами, без проверки TTL.
+
+    Пары идут по алфавиту. С currency остаётся одна пара, с top остаются
+    top самых дорогих криптовалют по убыванию курса. Базовая валюта не USD
+    пересчитывается через кросс-курс.
+
+    Raises:
+        ValueError: если кеш пуст, валюты нет в кеше или top не положительный.
+        CurrencyNotFoundError: если базовой валюты нет в реестре.
+        RateNotAvailableError: если курс к базовой валюте нельзя вывести.
+    """
+    if top is not None and top <= 0:
+        raise ValueError(MSG_BAD_TOP)
+    base = get_currency(base_currency).code
+    cached = _snapshot(DatabaseManager())
+    codes = {rate.from_code for rate in cached.pairs.values()} | {BASE_CURRENCY}
+    if not cached.pairs:
+        raise ValueError(MSG_EMPTY_CACHE)
+    if currency is not None:
+        if currency not in codes or currency == base:
+            raise ValueError(MSG_NOT_IN_CACHE.format(code=currency))
+        codes = {currency}
+    rates = [cached.get_rate(code, base) for code in sorted(codes) if code != base]
+    if top is not None:
+        rates = sorted(
+            (rate for rate in rates if _is_crypto(rate.from_code)),
+            key=lambda rate: rate.value,
+            reverse=True,
+        )[:top]
+    return RatesSnapshot({rate.key: rate for rate in rates}, cached.last_refresh)
+
+
+def _is_crypto(code: str) -> bool:
+    """Проверить по реестру, криптовалюта ли это; чужой код не криптовалюта."""
+    try:
+        return isinstance(get_currency(code), CryptoCurrency)
+    except CurrencyNotFoundError:
+        return False

@@ -2,8 +2,15 @@ import logging
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 
+import pytest
+
 from valutatrade_hub.infra import logging_config
-from valutatrade_hub.infra.logging_config import ACTIONS_LOGGER, setup_logging
+from valutatrade_hub.infra.logging_config import (
+    ACTIONS_LOGGER,
+    PARSER_LOGGER,
+    parser_console,
+    setup_logging,
+)
 from valutatrade_hub.infra.settings import SettingsLoader
 
 
@@ -51,3 +58,53 @@ class TestSetupLogging:
             handler.flush()
         text = (workdir / "logs" / logging_config.ACTIONS_LOG_FILE).read_text()
         assert text.endswith("SELL result=OK\n")
+
+    def test_parser_log_is_a_debug_file_with_a_detailed_format(self, workdir):
+        setup_logging()
+        logger = logging.getLogger(PARSER_LOGGER)
+        assert logger.level == logging.DEBUG
+        (handler,) = file_handlers(PARSER_LOGGER)
+        assert handler.baseFilename == str(logging_config.parser_log_path())
+        assert logging_config.parser_log_path() == workdir / "logs" / "parser.log"
+        record = logging.LogRecord(
+            PARSER_LOGGER, logging.DEBUG, __file__, 1, "GET x -> 200", None, None
+        )
+        record.created = datetime(2025, 10, 10, 15, 30, 0, tzinfo=UTC).timestamp()
+        assert handler.format(record) == (
+            "2025-10-10T15:30:00 DEBUG valutatrade.parser GET x -> 200"
+        )
+
+    def test_http_library_debug_records_are_silenced(self, workdir):
+        setup_logging()
+        http_logger = logging.getLogger(logging_config.HTTP_LIBRARY_LOGGER)
+        assert not http_logger.isEnabledFor(logging.DEBUG)
+        assert http_logger.isEnabledFor(logging.INFO)
+
+
+class TestParserConsole:
+    def test_shows_info_and_error_lines_only_inside_the_context(self, workdir, capsys):
+        setup_logging()
+        logger = logging.getLogger(PARSER_LOGGER)
+        logger.info("before")
+        with parser_console():
+            logger.debug("GET ... -> 200")
+            logger.info("Starting rates update...")
+            logger.error("Failed to fetch from CoinGecko: Network error.")
+        logger.info("after")
+        assert capsys.readouterr().out.splitlines() == [
+            "INFO: Starting rates update...",
+            "ERROR: Failed to fetch from CoinGecko: Network error.",
+        ]
+        assert not any(
+            isinstance(h, logging.StreamHandler)
+            and not isinstance(h, RotatingFileHandler)
+            for h in logger.handlers
+        )
+
+    def test_handler_is_removed_even_after_an_error(self, workdir):
+        setup_logging()
+        logger = logging.getLogger(PARSER_LOGGER)
+        before = list(logger.handlers)
+        with pytest.raises(RuntimeError), parser_console():
+            raise RuntimeError
+        assert logger.handlers == before

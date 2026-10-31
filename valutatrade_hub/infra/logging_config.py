@@ -6,13 +6,22 @@
 """
 
 import logging
+import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from valutatrade_hub.infra.settings import SettingsLoader
 
-__all__ = ["ACTIONS_LOGGER", "PARSER_LOGGER", "parser_log_path", "setup_logging"]
+__all__ = [
+    "ACTIONS_LOGGER",
+    "PARSER_LOGGER",
+    "parser_console",
+    "parser_log_path",
+    "setup_logging",
+]
 
 ACTIONS_LOGGER = "valutatrade.actions"
 ACTIONS_LOG_FILE = "actions.log"
@@ -24,6 +33,8 @@ HTTP_LIBRARY_LOGGER = "urllib3"
 ACTIONS_FORMAT = "%(levelname)s %(asctime)s %(message)s"
 # Пример записи: 2025-10-10T15:30:00 INFO valutatrade.parser Fetching from CoinGecko...
 PARSER_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+# Пример строки в консоли: INFO: Fetching from CoinGecko... OK (3 rates)
+CONSOLE_FORMAT = "%(levelname)s: %(message)s"
 LOG_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
 LOG_ENCODING = "utf-8"
 
@@ -78,3 +89,21 @@ def _utc_formatter(line_format: str) -> logging.Formatter:
     formatter = logging.Formatter(line_format, LOG_TIME_FORMAT)
     formatter.converter = time.gmtime
     return formatter
+
+
+@contextmanager
+def parser_console() -> Iterator[None]:
+    """Показывать записи парсера уровня INFO в консоли, пока открыт контекст.
+
+    Файл получает записи всегда, консоль только во время команды update-rates,
+    поэтому get-rate обновляет кеш молча.
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(CONSOLE_FORMAT))
+    logger = logging.getLogger(PARSER_LOGGER)
+    logger.addHandler(handler)
+    try:
+        yield
+    finally:
+        logger.removeHandler(handler)

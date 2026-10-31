@@ -78,7 +78,7 @@ class RatesUpdater:
                     MSG_SOURCE_FAILED.format(source=client.source, reason=error.reason)
                 )
                 logger.error("Failed to fetch from %s: %s", client.source, error.reason)
-                logger.debug("Причина сбоя %s", client.source, exc_info=error)
+                logger.debug("Failure details for %s", client.source, exc_info=error)
                 continue
             observed.update(fetched)
             logger.info(

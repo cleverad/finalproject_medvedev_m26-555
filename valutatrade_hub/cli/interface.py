@@ -19,7 +19,11 @@ from valutatrade_hub.core.exceptions import (
     ValutaTradeError,
 )
 from valutatrade_hub.core.models import TradeResult, User
-from valutatrade_hub.infra.logging_config import parser_log_path, setup_logging
+from valutatrade_hub.infra.logging_config import (
+    parser_console,
+    parser_log_path,
+    setup_logging,
+)
 
 __all__ = ["COMMANDS", "Command", "Session", "execute", "parse_options", "run"]
 
@@ -57,9 +61,19 @@ MSG_CHANGE_LINE = "- {code}: было {before} → стало {after}"
 MSG_BUY_VALUE = "Оценочная стоимость покупки: {value} {base}"
 MSG_SOLD = "Продажа выполнена: {amount} {code} по курсу {rate} {base}/{code}"
 MSG_SELL_VALUE = "Оценочная выручка: {value} {base}"
+MSG_UPDATE_OK = (
+    "Update successful. Total rates updated: {updated}. Last refresh: {last_refresh}"
+)
+MSG_UPDATE_ERRORS = "Update completed with errors. Check {log} for details."
+MSG_RATES_HEADER = "Rates from cache (updated at {updated_at}):"
+NO_TIME = "-"
 COLUMN_CURRENCY = "Валюта"
 COLUMN_BALANCE = "Баланс"
 COLUMN_VALUE = "Стоимость, {base}"
+COLUMN_PAIR = "Пара"
+COLUMN_RATE = "Курс"
+COLUMN_UPDATED = "Обновлено"
+COLUMN_SOURCE = "Источник"
 ALIGN_LEFT: Final = "l"
 ALIGN_RIGHT: Final = "r"
 
@@ -270,6 +284,67 @@ def cmd_get_rate(session: Session, options: Options) -> None:
     )
 
 
+def cmd_update_rates(session: Session, options: Options) -> None:
+    """Обновить кеш курсов, показывая журнал парсера в консоли."""
+    source = options.get("source")
+    with parser_console():
+        try:
+            result = usecases.update_rates(None if source is None else source.lower())
+        except ApiRequestError:
+            print(MSG_UPDATE_ERRORS.format(log=utils.shown_path(parser_log_path())))
+            raise
+    if result.ok:
+        last_refresh = utils.format_display_time(result.last_refresh)
+        print(MSG_UPDATE_OK.format(updated=result.updated, last_refresh=last_refresh))
+    else:
+        print(MSG_UPDATE_ERRORS.format(log=utils.shown_path(parser_log_path())))
+
+
+def cmd_show_rates(session: Session, options: Options) -> None:
+    """Показать курсы из кеша таблицей с фильтрами по валюте, числу и базе."""
+    currency = options.get("currency")
+    if currency is not None:
+        currency = utils.normalize_currency_code(currency)
+    top = None if "top" not in options else parse_top(options["top"])
+    base = utils.normalize_currency_code(options.get("base", BASE_CURRENCY))
+    rates = usecases.show_rates(currency, top, base)
+    updated_at = (
+        NO_TIME
+        if rates.last_refresh is None
+        else utils.format_display_time(rates.last_refresh)
+    )
+    print(MSG_RATES_HEADER.format(updated_at=updated_at))
+    table = PrettyTable([COLUMN_PAIR, COLUMN_RATE, COLUMN_UPDATED, COLUMN_SOURCE])
+    table.align[COLUMN_PAIR] = ALIGN_LEFT
+    table.align[COLUMN_RATE] = ALIGN_RIGHT
+    table.align[COLUMN_SOURCE] = ALIGN_LEFT
+    for rate in rates.pairs.values():
+        table.add_row(
+            [
+                rate.key,
+                utils.format_rate(rate.value),
+                utils.format_display_time(rate.updated_at),
+                rate.source,
+            ]
+        )
+    print(table)
+
+
+def parse_top(text: str) -> int:
+    """Прочитать число строк для --top.
+
+    Raises:
+        ValueError: если это не положительное целое число.
+    """
+    try:
+        top = int(text)
+    except ValueError:
+        raise ValueError(usecases.MSG_BAD_TOP) from None
+    if top <= 0:
+        raise ValueError(usecases.MSG_BAD_TOP)
+    return top
+
+
 def cmd_help(session: Session, options: Options) -> None:
     """Показать справку по всем командам или по одной."""
     name = options.get("command")
@@ -321,6 +396,14 @@ COMMANDS: dict[str, Command] = {
     ),
     "get-rate": Command(
         cmd_get_rate, "get-rate --from <str> --to <str>", required=("from", "to")
+    ),
+    "update-rates": Command(
+        cmd_update_rates, "update-rates [--source <str>]", optional=("source",)
+    ),
+    "show-rates": Command(
+        cmd_show_rates,
+        "show-rates [--currency <str>] [--top <int>] [--base <str>]",
+        optional=("currency", "top", "base"),
     ),
     "help": Command(cmd_help, "help [команда]", positional="command"),
     "exit": Command(cmd_exit, "exit"),

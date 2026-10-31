@@ -9,6 +9,7 @@ from valutatrade_hub.core import utils
 from valutatrade_hub.core.currencies import (
     AMOUNT_STEP,
     BASE_CURRENCY,
+    CryptoCurrency,
     Currency,
     get_currency,
 )
@@ -35,13 +36,27 @@ from valutatrade_hub.core.models import (
 )
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
-from valutatrade_hub.parser_service.updater import refresh_rates
+from valutatrade_hub.parser_service.updater import UpdateResult, refresh_rates
 
 MSG_UNKNOWN_BASE = "Неизвестная базовая валюта '{code}'"
 MSG_BASE_CURRENCY_TRADE = "Нельзя торговать базовой валютой {code}"
 MSG_TRADE_TOO_SMALL = "Стоимость сделки меньше {step} {code}"
+MSG_EMPTY_CACHE = (
+    "Локальный кеш курсов пуст. Выполните 'update-rates', чтобы загрузить данные."
+)
+MSG_NOT_IN_CACHE = "Курс для '{code}' не найден в кеше."
+MSG_BAD_TOP = "'top' должен быть положительным целым числом"
 
-__all__ = ["buy", "get_rate", "login", "register", "sell", "show_portfolio"]
+__all__ = [
+    "buy",
+    "get_rate",
+    "login",
+    "register",
+    "sell",
+    "show_portfolio",
+    "show_rates",
+    "update_rates",
+]
 
 
 def register(username: str, password: str) -> User:
@@ -283,3 +298,58 @@ def _trade_value(amount: Decimal, rate: Rate, base: Currency) -> Decimal:
         step = base.format_amount(AMOUNT_STEP)
         raise ValueError(MSG_TRADE_TOO_SMALL.format(step=step, code=base.code))
     return value
+
+
+def update_rates(source: str | None = None) -> UpdateResult:
+    """Обновить кеш курсов из всех источников или из одного по псевдониму.
+
+    Raises:
+        ValueError: если псевдоним источника неизвестен.
+        ApiRequestError: если не ответил ни один источник.
+    """
+    return refresh_rates(None if source is None else (source,))
+
+
+def show_rates(
+    currency: str | None = None,
+    top: int | None = None,
+    base_currency: str = BASE_CURRENCY,
+) -> RatesSnapshot:
+    """Вернуть курсы из кеша к базовой валюте с фильтрами, без проверки TTL.
+
+    Пары идут по алфавиту. С currency остаётся одна пара, с top остаются
+    top самых дорогих криптовалют по убыванию курса. Базовая валюта не USD
+    пересчитывается через кросс-курс.
+
+    Raises:
+        ValueError: если кеш пуст, валюты нет в кеше или top не положительный.
+        CurrencyNotFoundError: если базовой валюты нет в реестре.
+        RateNotAvailableError: если курс к базовой валюте нельзя вывести.
+    """
+    if top is not None and top <= 0:
+        raise ValueError(MSG_BAD_TOP)
+    base = get_currency(base_currency).code
+    cached = _snapshot(DatabaseManager())
+    codes = {rate.from_code for rate in cached.pairs.values()} | {BASE_CURRENCY}
+    if not cached.pairs:
+        raise ValueError(MSG_EMPTY_CACHE)
+    if currency is not None:
+        if currency not in codes or currency == base:
+            raise ValueError(MSG_NOT_IN_CACHE.format(code=currency))
+        codes = {currency}
+    rates = [cached.get_rate(code, base) for code in sorted(codes) if code != base]
+    if top is not None:
+        rates = sorted(
+            (rate for rate in rates if _is_crypto(rate.from_code)),
+            key=lambda rate: rate.value,
+            reverse=True,
+        )[:top]
+    return RatesSnapshot({rate.key: rate for rate in rates}, cached.last_refresh)
+
+
+def _is_crypto(code: str) -> bool:
+    """Проверить по реестру, криптовалюта ли это; чужой код не криптовалюта."""
+    try:
+        return isinstance(get_currency(code), CryptoCurrency)
+    except CurrencyNotFoundError:
+        return False

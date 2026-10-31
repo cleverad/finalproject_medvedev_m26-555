@@ -41,23 +41,25 @@ ETAG_HEADER = "ETag"
 MS_IN_SECOND = 1000
 KEY_PLACEHOLDER = "<key>"
 
-MSG_NETWORK = "{source}: сбой сети ({error})"
-MSG_HTTP = "{source}: HTTP {status} {phrase}"
-MSG_NOT_JSON = "{source}: ответ не JSON"
-MSG_BAD_SHAPE = "{source}: неожиданная форма ответа ({detail})"
-MSG_NO_RATE = "{source}: нет курса для {raw_id}"
-MSG_NO_KEY = f"{EXCHANGERATE_SOURCE}: не задан {API_KEY_ENV}"
-MSG_API_ERROR = "{source}: {explanation} ({error_type})"
+# Причины на английском, как строки журнала парсера, куда они попадают.
+# Имя источника в причину не входит: его подписывает RatesUpdater.
+MSG_NETWORK = "Network error ({error})"
+MSG_HTTP = "HTTP {status} {phrase}"
+MSG_NOT_JSON = "Response is not JSON"
+MSG_BAD_SHAPE = "Unexpected response shape ({detail})"
+MSG_NO_RATE = "No rate for {raw_id}"
+MSG_NO_KEY = f"{API_KEY_ENV} is not set"
+MSG_API_ERROR = "{explanation} ({error_type})"
 
 # Пояснения к error-type в ответах ExchangeRate-API v6.
 EXCHANGERATE_ERRORS = {
-    "invalid-key": "неверный ключ API",
-    "inactive-account": "учётная запись не подтверждена",
-    "quota-reached": "исчерпан лимит запросов",
-    "unsupported-code": "неизвестная валюта в запросе",
-    "malformed-request": "неверно составлен запрос",
+    "invalid-key": "Invalid API key",
+    "inactive-account": "Account is not confirmed",
+    "quota-reached": "Request quota reached",
+    "unsupported-code": "Unsupported currency code",
+    "malformed-request": "Malformed request",
 }
-UNKNOWN_ERROR_EXPLANATION = "ошибка API"
+UNKNOWN_ERROR_EXPLANATION = "API error"
 
 
 @dataclass(frozen=True)
@@ -123,11 +125,11 @@ class BaseApiClient(ABC):
                 url, params=params, timeout=self._config.request_timeout
             )
         except requests.RequestException as error:
-            reason = MSG_NETWORK.format(source=self.source, error=type(error).__name__)
+            reason = MSG_NETWORK.format(error=type(error).__name__)
             raise ApiRequestError(reason=reason) from error
         request_ms = round((time.monotonic() - started) * MS_IN_SECOND)
         logger.debug(
-            "GET %s -> %s за %s мс", shown_url or url, response.status_code, request_ms
+            "GET %s -> %s in %s ms", shown_url or url, response.status_code, request_ms
         )
         payload = self._payload(response)
         if response.status_code != HTTPStatus.OK:
@@ -147,9 +149,7 @@ class BaseApiClient(ABC):
     def _describe_failure(self, response: requests.Response, payload: Any) -> str:
         """Описать ответ со статусом кроме 200."""
         phrase = HTTPStatus(response.status_code).phrase
-        return MSG_HTTP.format(
-            source=self.source, status=response.status_code, phrase=phrase
-        )
+        return MSG_HTTP.format(status=response.status_code, phrase=phrase)
 
     def _require_json(self, payload: Any) -> dict[str, Any]:
         """Проверить, что тело ответа есть и это объект.
@@ -158,12 +158,10 @@ class BaseApiClient(ABC):
             ApiRequestError: если тела нет или оно не объект JSON.
         """
         if payload is None:
-            raise ApiRequestError(reason=MSG_NOT_JSON.format(source=self.source))
+            raise ApiRequestError(reason=MSG_NOT_JSON)
         if not isinstance(payload, dict):
             detail = type(payload).__name__
-            raise ApiRequestError(
-                reason=MSG_BAD_SHAPE.format(source=self.source, detail=detail)
-            )
+            raise ApiRequestError(reason=MSG_BAD_SHAPE.format(detail=detail))
         return payload
 
     def _number(self, value: object, raw_id: str) -> Decimal:
@@ -173,9 +171,7 @@ class BaseApiClient(ABC):
             ApiRequestError: если значения нет или оно не число.
         """
         if isinstance(value, bool) or not isinstance(value, int | float):
-            raise ApiRequestError(
-                reason=MSG_NO_RATE.format(source=self.source, raw_id=raw_id)
-            )
+            raise ApiRequestError(reason=MSG_NO_RATE.format(raw_id=raw_id))
         return utils.to_decimal(value)
 
     def _moment(self, unix_time: object) -> datetime:
@@ -205,9 +201,7 @@ class CoinGeckoClient(BaseApiClient):
             raw_id = config.crypto_id_map[code]
             coin = coins.get(raw_id)
             if not isinstance(coin, dict):
-                raise ApiRequestError(
-                    reason=MSG_NO_RATE.format(source=self.source, raw_id=raw_id)
-                )
+                raise ApiRequestError(reason=MSG_NO_RATE.format(raw_id=raw_id))
             value = self._number(coin.get(config.base_currency.lower()), raw_id)
             moment = self._moment(coin.get("last_updated_at"))
             rate = Rate(code, config.base_currency, value, moment, self.source)
@@ -235,9 +229,7 @@ class ExchangeRateApiClient(BaseApiClient):
         quotes = body.get("conversion_rates")
         if not isinstance(quotes, dict):
             raise ApiRequestError(
-                reason=MSG_BAD_SHAPE.format(
-                    source=self.source, detail="нет conversion_rates"
-                )
+                reason=MSG_BAD_SHAPE.format(detail="no conversion_rates")
             )
         moment = self._moment(body.get("time_last_update_unix"))
         observed = {}
@@ -257,6 +249,4 @@ class ExchangeRateApiClient(BaseApiClient):
         """Перевести error-type из ответа v6 в понятную причину."""
         error_type = str(body.get("error-type"))
         explanation = EXCHANGERATE_ERRORS.get(error_type, UNKNOWN_ERROR_EXPLANATION)
-        return MSG_API_ERROR.format(
-            source=self.source, explanation=explanation, error_type=error_type
-        )
+        return MSG_API_ERROR.format(explanation=explanation, error_type=error_type)

@@ -136,7 +136,7 @@ class TestCoinGeckoClient:
     )
     def test_incomplete_answer_is_an_api_error(self, config, fake_get, payload):
         fake_get(FakeResponse(payload=payload))
-        with pytest.raises(ApiRequestError, match="CoinGecko"):
+        with pytest.raises(ApiRequestError, match="No rate|response shape"):
             CoinGeckoClient(config).fetch_rates()
 
     def test_bad_status_is_an_api_error(self, config, fake_get):
@@ -184,8 +184,8 @@ class TestExchangeRateApiClient:
     @pytest.mark.parametrize(
         ("status", "error_type", "expected"),
         [
-            (403, "invalid-key", "ключ"),
-            (429, "quota-reached", "лимит"),
+            (403, "invalid-key", "Invalid API key"),
+            (429, "quota-reached", "quota"),
             (404, "unsupported-code", "unsupported-code"),
         ],
     )
@@ -200,7 +200,7 @@ class TestExchangeRateApiClient:
     def test_error_result_with_ok_status_is_still_an_error(self, config, fake_get):
         payload = {"result": "error", "error-type": "quota-reached"}
         fake_get(FakeResponse(payload=payload))
-        with pytest.raises(ApiRequestError, match="лимит"):
+        with pytest.raises(ApiRequestError, match="quota"):
             ExchangeRateApiClient(config).fetch_rates()
 
     @pytest.mark.parametrize(
@@ -213,7 +213,7 @@ class TestExchangeRateApiClient:
     )
     def test_incomplete_answer_is_an_api_error(self, config, fake_get, payload):
         fake_get(FakeResponse(payload=payload))
-        with pytest.raises(ApiRequestError, match="ExchangeRate-API"):
+        with pytest.raises(ApiRequestError, match="No rate|response shape"):
             ExchangeRateApiClient(config).fetch_rates()
 
     def test_key_never_leaks_into_errors_or_logs(self, config, fake_get, caplog):

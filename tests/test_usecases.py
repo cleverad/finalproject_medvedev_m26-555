@@ -519,3 +519,67 @@ class TestActionsLog:
             "BUY user=1 currency='BTC' amount=1 result=ERROR "
             "error_type=InsufficientFundsError error_message='Недостаточно средств"
         )
+
+
+class TestUpdateRates:
+    def test_all_sources_by_default(self, workdir, offline_refresh):
+        result = usecases.update_rates()
+        assert offline_refresh == [None]
+        assert result.ok
+
+    def test_one_source_by_alias(self, workdir, offline_refresh):
+        usecases.update_rates("coingecko")
+        assert offline_refresh == [("coingecko",)]
+
+
+class TestShowRates:
+    def test_empty_cache(self, workdir):
+        with pytest.raises(ValueError, match="Локальный кеш курсов пуст"):
+            usecases.show_rates()
+
+    def test_all_pairs_sorted_by_key(self, rates):
+        shown = usecases.show_rates()
+        assert list(shown.pairs) == ["BTC_USD", "EUR_USD"]
+        assert shown.pairs["BTC_USD"].value == Decimal("59300.0")
+        assert shown.last_refresh == RatesSnapshot.from_dict(RATES_JSON).last_refresh
+
+    def test_does_not_check_ttl_or_refresh(self, rates, monkeypatch, offline_refresh):
+        monkeypatch.setattr(utils, "utc_now", lambda: UPDATED_AT + timedelta(days=9))
+        assert list(usecases.show_rates().pairs) == ["BTC_USD", "EUR_USD"]
+        assert offline_refresh == []
+
+    def test_single_currency(self, rates):
+        shown = usecases.show_rates(currency="EUR")
+        assert list(shown.pairs) == ["EUR_USD"]
+
+    @pytest.mark.parametrize("code", ["ABC", "GBP", "USD"])
+    def test_currency_missing_from_cache(self, rates, code):
+        with pytest.raises(ValueError, match=f"Курс для '{code}' не найден в кеше."):
+            usecases.show_rates(currency=code)
+
+    def test_top_lists_most_expensive_crypto_only(self, workdir, offline_refresh):
+        usecases.update_rates()
+        shown = usecases.show_rates(top=2)
+        assert list(shown.pairs) == ["BTC_USD", "ETH_USD"]
+        assert usecases.show_rates(top=1).pairs.keys() == {"BTC_USD"}
+        assert list(usecases.show_rates(top=10).pairs) == ["BTC_USD", "ETH_USD"]
+
+    @pytest.mark.parametrize("top", [0, -1])
+    def test_top_must_be_positive(self, rates, top):
+        with pytest.raises(ValueError, match="'top'"):
+            usecases.show_rates(top=top)
+
+    def test_other_base_is_derived_by_cross_rate(self, rates):
+        shown = usecases.show_rates(base_currency="EUR")
+        assert list(shown.pairs) == ["BTC_EUR", "USD_EUR"]
+        assert shown.pairs["BTC_EUR"].value == Decimal("59300.0") / Decimal("1.07")
+        assert shown.pairs["USD_EUR"].value == 1 / Decimal("1.07")
+        assert shown.pairs["BTC_EUR"].source == "CoinGecko+ExchangeRate-API"
+
+    def test_unknown_base(self, rates):
+        with pytest.raises(CurrencyNotFoundError):
+            usecases.show_rates(base_currency="ABC")
+
+    def test_base_without_a_rate_in_cache(self, rates):
+        with pytest.raises(RateNotAvailableError):
+            usecases.show_rates(base_currency="GBP")

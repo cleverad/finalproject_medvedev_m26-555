@@ -3,7 +3,11 @@ from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 
 from valutatrade_hub.infra import logging_config
-from valutatrade_hub.infra.logging_config import ACTIONS_LOGGER, setup_logging
+from valutatrade_hub.infra.logging_config import (
+    ACTIONS_LOGGER,
+    PARSER_LOGGER,
+    setup_logging,
+)
 from valutatrade_hub.infra.settings import SettingsLoader
 
 
@@ -51,3 +55,25 @@ class TestSetupLogging:
             handler.flush()
         text = (workdir / "logs" / logging_config.ACTIONS_LOG_FILE).read_text()
         assert text.endswith("SELL result=OK\n")
+
+    def test_parser_log_is_a_debug_file_with_a_detailed_format(self, workdir):
+        setup_logging()
+        logger = logging.getLogger(PARSER_LOGGER)
+        assert logger.level == logging.DEBUG
+        (handler,) = file_handlers(PARSER_LOGGER)
+        assert handler.baseFilename == str(
+            SettingsLoader().get("log_dir") / logging_config.PARSER_LOG_FILE
+        )
+        record = logging.LogRecord(
+            PARSER_LOGGER, logging.DEBUG, __file__, 1, "GET x -> 200", None, None
+        )
+        record.created = datetime(2025, 10, 10, 15, 30, 0, tzinfo=UTC).timestamp()
+        assert handler.format(record) == (
+            "2025-10-10T15:30:00 DEBUG valutatrade.parser GET x -> 200"
+        )
+
+    def test_http_library_debug_records_are_silenced(self, workdir):
+        setup_logging()
+        http_logger = logging.getLogger(logging_config.HTTP_LIBRARY_LOGGER)
+        assert not http_logger.isEnabledFor(logging.DEBUG)
+        assert http_logger.isEnabledFor(logging.INFO)

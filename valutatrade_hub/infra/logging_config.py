@@ -1,28 +1,35 @@
-"""Настройка журналов: строковый формат, файл с ротацией, уровень из настроек.
+"""Настройка журналов: строковый формат, файлы с ротацией, уровень из настроек.
 
-Журнал действий пользователя пишется в logs/actions.log. Папка и размер файла,
-число копий и уровень берутся из SettingsLoader.
+Журнал действий пользователя пишется в logs/actions.log с уровнем из настроек,
+журнал парсера курсов в logs/parser.log с уровнем DEBUG и подробным форматом.
+Папка, размер файла и число копий берутся из SettingsLoader.
 """
 
 import logging
 import time
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from valutatrade_hub.infra.settings import SettingsLoader
 
-__all__ = ["ACTIONS_LOGGER", "setup_logging"]
+__all__ = ["ACTIONS_LOGGER", "PARSER_LOGGER", "setup_logging"]
 
 ACTIONS_LOGGER = "valutatrade.actions"
 ACTIONS_LOG_FILE = "actions.log"
+PARSER_LOGGER = "valutatrade.parser"
+PARSER_LOG_FILE = "parser.log"
+HTTP_LIBRARY_LOGGER = "urllib3"
 
 # Пример записи: INFO 2025-10-09T12:05:22 BUY user='alice' ... result=OK
-LOG_FORMAT = "%(levelname)s %(asctime)s %(message)s"
+ACTIONS_FORMAT = "%(levelname)s %(asctime)s %(message)s"
+# Пример записи: 2025-10-10T15:30:00 INFO valutatrade.parser Fetching from CoinGecko...
+PARSER_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 LOG_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
 LOG_ENCODING = "utf-8"
 
 
 def setup_logging() -> None:
-    """Направить журнал действий в файл с ротацией.
+    """Направить журналы действий и парсера в файлы с ротацией.
 
     Повторный вызов заменяет обработчики, поэтому смена рабочей папки
     в тестах не плодит файлы.
@@ -30,23 +37,41 @@ def setup_logging() -> None:
     settings = SettingsLoader()
     log_dir = settings.get("log_dir")
     log_dir.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger(ACTIONS_LOGGER)
-    logger.setLevel(settings.get("log_level"))
+    _to_rotating_file(
+        ACTIONS_LOGGER,
+        log_dir / ACTIONS_LOG_FILE,
+        ACTIONS_FORMAT,
+        settings.get("log_level"),
+    )
+    _to_rotating_file(
+        PARSER_LOGGER, log_dir / PARSER_LOG_FILE, PARSER_FORMAT, logging.DEBUG
+    )
+    # Отладочные записи HTTP-библиотеки содержат адрес запроса вместе с ключом API.
+    logging.getLogger(HTTP_LIBRARY_LOGGER).setLevel(logging.INFO)
+
+
+def _to_rotating_file(
+    name: str, path: Path, line_format: str, level: int | str
+) -> None:
+    """Заменить обработчики логгера одним файлом с ротацией из настроек."""
+    settings = SettingsLoader()
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         handler.close()
     handler = RotatingFileHandler(
-        log_dir / ACTIONS_LOG_FILE,
+        path,
         maxBytes=settings.get("log_max_bytes"),
         backupCount=settings.get("log_backup_count"),
         encoding=LOG_ENCODING,
     )
-    handler.setFormatter(_utc_formatter())
+    handler.setFormatter(_utc_formatter(line_format))
     logger.addHandler(handler)
 
 
-def _utc_formatter() -> logging.Formatter:
+def _utc_formatter(line_format: str) -> logging.Formatter:
     """Собрать форматтер с временем в UTC, как и всё время в приложении."""
-    formatter = logging.Formatter(LOG_FORMAT, LOG_TIME_FORMAT)
+    formatter = logging.Formatter(line_format, LOG_TIME_FORMAT)
     formatter.converter = time.gmtime
     return formatter

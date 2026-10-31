@@ -61,7 +61,7 @@ make run
 Полный цикл: регистрация, вход, портфель, покупка и продажа, курс пары, ошибки,
 обновление кеша и просмотр курсов.
 
-[![asciicast](https://asciinema.org/a/Mf7BSknC81UB3y89.svg)](https://asciinema.org/a/Mf7BSknC81UB3y89)
+[![asciicast](docs/demo.svg)](https://asciinema.org/a/Mf7BSknC81UB3y89)
 
 ## Команды
 
@@ -283,6 +283,7 @@ finalproject_medvedev_m26-555/
 ├── tests/
 ├── main.py
 ├── pyproject.toml
+├── docs/                       # превью записи демо
 ├── .env.example
 └── README.md
 ```

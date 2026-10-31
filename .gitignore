@@ -6,7 +6,6 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 /.idea/
-/docs/
 logs/
 .env
 data/*

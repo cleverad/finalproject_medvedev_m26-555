@@ -12,8 +12,14 @@ from valutatrade_hub.core.exceptions import (
     RateNotAvailableError,
     UsernameTakenError,
     UserNotFoundError,
+    WalletNotFoundError,
 )
-from valutatrade_hub.core.models import BUY_ACTION, STUB_SOURCE, RatesSnapshot
+from valutatrade_hub.core.models import (
+    BUY_ACTION,
+    SELL_ACTION,
+    STUB_SOURCE,
+    RatesSnapshot,
+)
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
 
@@ -310,3 +316,111 @@ class TestBuy:
     def test_unknown_user(self, rates):
         with pytest.raises(UserNotFoundError):
             usecases.buy(42, "BTC", 0.05)
+
+
+class TestSell:
+    def test_debits_currency_and_credits_usd(self, rates, workdir):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        result = usecases.sell(alice.user_id, "BTC", 0.01)
+        assert result.action == SELL_ACTION
+        assert result.username == "alice"
+        assert result.currency.code == "BTC"
+        assert result.amount == Decimal("0.01")
+        assert result.rate.value == Decimal("59300.0")
+        assert (result.before, result.after) == (Decimal("0.05"), Decimal("0.04"))
+        assert result.base.code == "USD"
+        assert (result.base_before, result.base_after) == (Decimal(7035), Decimal(7628))
+        assert result.value == Decimal("593.00")
+        assert stored_wallets(workdir) == {
+            "USD": {"balance": 7628.0},
+            "BTC": {"balance": 0.04},
+        }
+
+    def test_selling_everything_leaves_exact_zero_and_keeps_the_wallet(
+        self, rates, workdir
+    ):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        result = usecases.sell(alice.user_id, "BTC", 0.05)
+        assert result.after == 0
+        assert result.base_after == Decimal(10000)
+        assert stored_wallets(workdir) == {
+            "USD": {"balance": 10000.0},
+            "BTC": {"balance": 0.0},
+        }
+
+    def test_round_trip_at_one_rate_conserves_value(self, rates):
+        alice = usecases.register("alice", "1234")
+        bought = usecases.buy(alice.user_id, "BTC", Decimal("0.12345678"))
+        sold = usecases.sell(alice.user_id, "BTC", Decimal("0.12345678"))
+        assert sold.value == bought.value
+        assert sold.base_after == Decimal(10000)
+
+    def test_insufficient_currency_changes_nothing(self, rates, workdir):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.04)
+        with pytest.raises(InsufficientFundsError) as info:
+            usecases.sell(alice.user_id, "BTC", 0.05)
+        assert str(info.value) == (
+            "Недостаточно средств: доступно 0.0400 BTC, требуется 0.0500 BTC"
+        )
+        assert stored_wallets(workdir) == {
+            "USD": {"balance": 7628.0},
+            "BTC": {"balance": 0.04},
+        }
+
+    def test_missing_wallet(self, rates, workdir):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises(WalletNotFoundError) as info:
+            usecases.sell(alice.user_id, "BTC", 0.01)
+        assert str(info.value) == (
+            "У вас нет кошелька 'BTC'. Добавьте валюту: она создаётся "
+            "автоматически при первой покупке."
+        )
+        assert stored_wallets(workdir) == {"USD": {"balance": 10000.0}}
+
+    def test_proceeds_less_than_a_step_are_rejected(self, workdir):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "RUB", 1)
+        message = usecases.MSG_TRADE_TOO_SMALL.format(step="0.00000001", code="USD")
+        with pytest.raises(ValueError, match=message):
+            usecases.sell(alice.user_id, "RUB", Decimal("0.00000001"))
+
+    @pytest.mark.parametrize("amount", [0, -0.01, "0.05", float("nan")])
+    def test_bad_amount(self, rates, amount):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        with pytest.raises((ValueError, TypeError)):
+            usecases.sell(alice.user_id, "BTC", amount)
+
+    def test_amount_is_cut_to_the_currency_step(self, rates):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        result = usecases.sell(alice.user_id, "BTC", 0.012345678901)
+        assert result.amount == Decimal("0.01234567")
+
+    def test_base_currency_is_not_tradable(self, rates):
+        alice = usecases.register("alice", "1234")
+        message = usecases.MSG_BASE_CURRENCY_TRADE.format(code="USD")
+        with pytest.raises(ValueError, match=message):
+            usecases.sell(alice.user_id, "USD", 100)
+
+    def test_unknown_currency(self, rates):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises(CurrencyNotFoundError):
+            usecases.sell(alice.user_id, "ABC", 1)
+
+    def test_stale_rate_blocks_the_trade(self, rates, workdir, monkeypatch):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        ttl = SettingsLoader().get("rates_ttl_seconds")
+        later = UPDATED_AT + timedelta(seconds=ttl + 1)
+        monkeypatch.setattr(utils, "utc_now", lambda: later)
+        with pytest.raises(RateNotAvailableError):
+            usecases.sell(alice.user_id, "BTC", 0.01)
+        assert stored_wallets(workdir)["BTC"] == {"balance": 0.05}
+
+    def test_unknown_user(self, rates):
+        with pytest.raises(UserNotFoundError):
+            usecases.sell(42, "BTC", 0.05)

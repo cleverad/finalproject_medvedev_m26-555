@@ -18,9 +18,11 @@ from valutatrade_hub.core.exceptions import (
     RateNotAvailableError,
     UsernameTakenError,
     UserNotFoundError,
+    WalletNotFoundError,
 )
 from valutatrade_hub.core.models import (
     BUY_ACTION,
+    SELL_ACTION,
     Portfolio,
     PortfolioValuation,
     Rate,
@@ -36,7 +38,7 @@ MSG_UNKNOWN_BASE = "Неизвестная базовая валюта '{code}'"
 MSG_BASE_CURRENCY_TRADE = "Нельзя торговать базовой валютой {code}"
 MSG_TRADE_TOO_SMALL = "Стоимость сделки меньше {step} {code}"
 
-__all__ = ["buy", "get_rate", "login", "register", "show_portfolio"]
+__all__ = ["buy", "get_rate", "login", "register", "sell", "show_portfolio"]
 
 
 def register(username: str, password: str) -> User:
@@ -146,10 +148,7 @@ def buy(user_id: int, currency_code: str, amount: object) -> TradeResult:
         RateNotAvailableError: если курса к базовой валюте нет или он устарел.
         InsufficientFundsError: если базовой валюты не хватает на стоимость.
     """
-    currency = get_currency(currency_code)
-    if currency.code == BASE_CURRENCY:
-        raise ValueError(MSG_BASE_CURRENCY_TRADE.format(code=BASE_CURRENCY))
-    amount = currency.positive_amount(amount)
+    currency, amount = _tradable(currency_code, amount)
     db = DatabaseManager()
     user, portfolio = _user_portfolio(db, user_id)
     rate = get_rate(currency.code, BASE_CURRENCY)
@@ -160,10 +159,80 @@ def buy(user_id: int, currency_code: str, amount: object) -> TradeResult:
     base_wallet.withdraw(cost)
     wallet.deposit(amount)
     db.save_portfolio(portfolio)
+    return _trade_result(
+        BUY_ACTION, user, wallet, base_wallet, rate, amount, before, base_before, cost
+    )
+
+
+def sell(user_id: int, currency_code: str, amount: object) -> TradeResult:
+    """Продать валюту за базовую по свежему курсу.
+
+    Кошелёк валюты должен существовать, после продажи он остаётся и с нулём.
+
+    Raises:
+        UserNotFoundError: если пользователя с таким id нет.
+        CurrencyNotFoundError: если код валюты не в реестре.
+        ValueError: если валюта базовая, сумма не положительная или выручка
+            меньше шага учёта.
+        WalletNotFoundError: если кошелька этой валюты в портфеле нет.
+        RateNotAvailableError: если курса к базовой валюте нет или он устарел.
+        InsufficientFundsError: если на кошельке меньше, чем продаётся.
+    """
+    currency, amount = _tradable(currency_code, amount)
+    db = DatabaseManager()
+    user, portfolio = _user_portfolio(db, user_id)
+    wallet = portfolio.get_wallet(currency.code)
+    if wallet is None:
+        raise WalletNotFoundError(code=currency.code)
+    rate = get_rate(currency.code, BASE_CURRENCY)
+    base_wallet = portfolio.add_currency(BASE_CURRENCY)
+    proceeds = _trade_value(amount, rate, base_wallet.currency)
+    before, base_before = wallet.balance, base_wallet.balance
+    wallet.withdraw(amount)
+    base_wallet.deposit(proceeds)
+    db.save_portfolio(portfolio)
+    return _trade_result(
+        SELL_ACTION,
+        user,
+        wallet,
+        base_wallet,
+        rate,
+        amount,
+        before,
+        base_before,
+        proceeds,
+    )
+
+
+def _tradable(currency_code: str, amount: object) -> tuple[Currency, Decimal]:
+    """Вернуть валюту сделки и её сумму с шагом учёта.
+
+    Raises:
+        CurrencyNotFoundError: если код валюты не в реестре.
+        ValueError: если валюта базовая или сумма не положительная.
+    """
+    currency = get_currency(currency_code)
+    if currency.code == BASE_CURRENCY:
+        raise ValueError(MSG_BASE_CURRENCY_TRADE.format(code=BASE_CURRENCY))
+    return currency, currency.positive_amount(amount)
+
+
+def _trade_result(
+    action: str,
+    user: User,
+    wallet: Wallet,
+    base_wallet: Wallet,
+    rate: Rate,
+    amount: Decimal,
+    before: Decimal,
+    base_before: Decimal,
+    value: Decimal,
+) -> TradeResult:
+    """Собрать итог сделки из кошельков после изменения и балансов до него."""
     return TradeResult(
-        BUY_ACTION,
+        action,
         user.username,
-        currency,
+        wallet.currency,
         amount,
         rate,
         before,
@@ -171,7 +240,7 @@ def buy(user_id: int, currency_code: str, amount: object) -> TradeResult:
         base_wallet.currency,
         base_before,
         base_wallet.balance,
-        cost,
+        value,
     )
 
 

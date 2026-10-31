@@ -47,6 +47,8 @@ MSG_BOUGHT = "Покупка выполнена: {amount} {code} по курсу
 MSG_CHANGES = "Изменения в портфеле:"
 MSG_CHANGE_LINE = "- {code}: было {before} → стало {after}"
 MSG_BUY_VALUE = "Оценочная стоимость покупки: {value} {base}"
+MSG_SOLD = "Продажа выполнена: {amount} {code} по курсу {rate} {base}/{code}"
+MSG_SELL_VALUE = "Оценочная выручка: {value} {base}"
 COLUMN_CURRENCY = "Валюта"
 COLUMN_BALANCE = "Баланс"
 COLUMN_VALUE = "Стоимость, {base}"
@@ -192,6 +194,28 @@ def cmd_buy(session: Session, options: Options) -> None:
     print(MSG_BUY_VALUE.format(value=value, base=result.base.code))
 
 
+def cmd_sell(session: Session, options: Options) -> None:
+    """Продать валюту за базовую и показать изменения в портфеле."""
+    user = session.require()
+    code = utils.normalize_currency_code(options["currency"])
+    amount = utils.parse_amount(options["amount"])
+    result = usecases.sell(user.user_id, code, amount)
+    print(
+        MSG_SOLD.format(
+            amount=result.currency.format_amount(result.amount),
+            code=result.currency.code,
+            rate=utils.format_rate(result.rate.value),
+            base=result.base.code,
+        )
+    )
+    print_changes(result)
+    print(
+        MSG_SELL_VALUE.format(
+            value=result.base.format_value(result.value), base=result.base.code
+        )
+    )
+
+
 def print_changes(result: TradeResult) -> None:
     """Напечатать, как сделка изменила оба кошелька."""
     print(MSG_CHANGES)
@@ -274,6 +298,12 @@ COMMANDS: dict[str, Command] = {
     "buy": Command(
         cmd_buy,
         "buy --currency <str> --amount <float>",
+        required=("currency", "amount"),
+        requires_login=True,
+    ),
+    "sell": Command(
+        cmd_sell,
+        "sell --currency <str> --amount <float>",
         required=("currency", "amount"),
         requires_login=True,
     ),

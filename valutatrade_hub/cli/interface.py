@@ -19,7 +19,7 @@ from valutatrade_hub.core.exceptions import (
     ValutaTradeError,
 )
 from valutatrade_hub.core.models import TradeResult, User
-from valutatrade_hub.infra.logging_config import (
+from valutatrade_hub.logging_config import (
     parser_console,
     parser_log_path,
     setup_logging,

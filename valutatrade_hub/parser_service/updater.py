@@ -12,7 +12,7 @@ from datetime import datetime
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.infra.database import DatabaseManager
-from valutatrade_hub.infra.logging_config import PARSER_LOGGER
+from valutatrade_hub.logging_config import PARSER_LOGGER
 from valutatrade_hub.parser_service.api_clients import (
     BaseApiClient,
     CoinGeckoClient,

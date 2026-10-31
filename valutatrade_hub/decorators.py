@@ -4,12 +4,15 @@ import functools
 import inspect
 import logging
 from collections.abc import Callable
+from typing import ParamSpec
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.models import TradeResult
-from valutatrade_hub.infra.logging_config import ACTIONS_LOGGER
+from valutatrade_hub.logging_config import ACTIONS_LOGGER
 
 __all__ = ["log_action"]
+
+P = ParamSpec("P")
 
 # Имена аргументов сделки и подписи их полей в записи журнала.
 ARGUMENT_FIELDS = {"user_id": "user", "currency_code": "currency", "amount": "amount"}
@@ -19,7 +22,7 @@ RESULT_OK = "OK"
 RESULT_ERROR = "ERROR"
 
 
-def log_action[**P](
+def log_action(
     action: str, verbose: bool = False
 ) -> Callable[[Callable[P, TradeResult]], Callable[P, TradeResult]]:
     """Собрать декоратор, который записывает сделку в журнал действий.

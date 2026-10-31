@@ -5,8 +5,8 @@ from typing import ClassVar
 import pytest
 
 from valutatrade_hub.core.exceptions import ApiRequestError
-from valutatrade_hub.infra.logging_config import PARSER_LOGGER
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.logging_config import PARSER_LOGGER
 from valutatrade_hub.parser_service import scheduler
 from valutatrade_hub.parser_service.scheduler import RatesScheduler
 from valutatrade_hub.parser_service.updater import UpdateResult

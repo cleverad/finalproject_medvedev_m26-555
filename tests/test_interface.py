@@ -12,7 +12,7 @@ from valutatrade_hub.core.currencies import supported_codes
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.models import Rate, RatesSnapshot
 from valutatrade_hub.infra.database import DatabaseManager
-from valutatrade_hub.infra.logging_config import PARSER_LOGGER, setup_logging
+from valutatrade_hub.logging_config import PARSER_LOGGER, setup_logging
 from valutatrade_hub.parser_service.updater import UpdateResult
 
 

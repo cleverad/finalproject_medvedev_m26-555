@@ -19,7 +19,7 @@ import requests
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.models import Rate
-from valutatrade_hub.infra.logging_config import PARSER_LOGGER
+from valutatrade_hub.logging_config import PARSER_LOGGER
 from valutatrade_hub.parser_service.config import API_KEY_ENV, ParserConfig
 
 __all__ = [

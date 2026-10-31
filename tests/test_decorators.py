@@ -5,10 +5,10 @@ from decimal import Decimal
 import pytest
 
 from valutatrade_hub.core.currencies import get_currency
-from valutatrade_hub.core.decorators import log_action
 from valutatrade_hub.core.exceptions import InsufficientFundsError
 from valutatrade_hub.core.models import BUY_ACTION, SELL_ACTION, Rate, TradeResult
-from valutatrade_hub.infra.logging_config import ACTIONS_LOGGER
+from valutatrade_hub.decorators import log_action
+from valutatrade_hub.logging_config import ACTIONS_LOGGER
 
 UPDATED_AT = datetime(2025, 10, 9, 12, 5, 22, tzinfo=UTC)
 RESULT = TradeResult(

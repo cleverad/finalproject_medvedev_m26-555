@@ -4,14 +4,14 @@ from logging.handlers import RotatingFileHandler
 
 import pytest
 
-from valutatrade_hub.infra import logging_config
-from valutatrade_hub.infra.logging_config import (
+from valutatrade_hub import logging_config
+from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.logging_config import (
     ACTIONS_LOGGER,
     PARSER_LOGGER,
     parser_console,
     setup_logging,
 )
-from valutatrade_hub.infra.settings import SettingsLoader
 
 
 def file_handlers(name: str) -> list[RotatingFileHandler]:

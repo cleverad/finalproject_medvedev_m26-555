@@ -13,9 +13,13 @@ from prettytable import PrettyTable
 
 from valutatrade_hub.core import usecases, utils
 from valutatrade_hub.core.currencies import BASE_CURRENCY, supported_codes
-from valutatrade_hub.core.exceptions import CurrencyNotFoundError, ValutaTradeError
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    ValutaTradeError,
+)
 from valutatrade_hub.core.models import TradeResult, User
-from valutatrade_hub.infra.logging_config import setup_logging
+from valutatrade_hub.infra.logging_config import parser_log_path, setup_logging
 
 __all__ = ["COMMANDS", "Command", "Session", "execute", "parse_options", "run"]
 
@@ -43,6 +47,8 @@ MSG_NO_WALLETS = "Кошельков пока нет"
 MSG_TOTAL = "ИТОГО: {total} {base}"
 MSG_RATE = "Курс {from_code}→{to_code}: {rate} (обновлено: {updated_at})"
 MSG_INVERSE_RATE = "Обратный курс {from_code}→{to_code}: {rate}"
+MSG_RATE_UNAVAILABLE = "Курс {from_code}→{to_code} недоступен. Повторите попытку позже."
+MSG_API_HINT = "Проверьте сеть и ключ API. Подробности в {log}"
 MSG_SUPPORTED_CODES = "Поддерживаемые коды: {codes}"
 CODES_SEPARATOR = ", "
 MSG_BOUGHT = "Покупка выполнена: {amount} {code} по курсу {rate} {base}/{code}"
@@ -241,7 +247,11 @@ def cmd_get_rate(session: Session, options: Options) -> None:
     """Показать курс пары, время обновления и обратный курс."""
     from_code = utils.normalize_currency_code(options["from"])
     to_code = utils.normalize_currency_code(options["to"])
-    rate = usecases.get_rate(from_code, to_code)
+    try:
+        rate = usecases.get_rate(from_code, to_code)
+    except ApiRequestError:
+        print(MSG_RATE_UNAVAILABLE.format(from_code=from_code, to_code=to_code))
+        raise
     print(
         MSG_RATE.format(
             from_code=rate.from_code,
@@ -349,6 +359,8 @@ def execute(line: str, session: Session) -> None:
                     codes=CODES_SEPARATOR.join(supported_codes())
                 )
             )
+        if isinstance(error, ApiRequestError):
+            print(MSG_API_HINT.format(log=utils.shown_path(parser_log_path())))
 
 
 def run() -> None:

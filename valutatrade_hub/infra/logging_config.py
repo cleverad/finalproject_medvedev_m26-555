@@ -12,7 +12,7 @@ from pathlib import Path
 
 from valutatrade_hub.infra.settings import SettingsLoader
 
-__all__ = ["ACTIONS_LOGGER", "PARSER_LOGGER", "setup_logging"]
+__all__ = ["ACTIONS_LOGGER", "PARSER_LOGGER", "parser_log_path", "setup_logging"]
 
 ACTIONS_LOGGER = "valutatrade.actions"
 ACTIONS_LOG_FILE = "actions.log"
@@ -26,6 +26,11 @@ ACTIONS_FORMAT = "%(levelname)s %(asctime)s %(message)s"
 PARSER_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 LOG_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
 LOG_ENCODING = "utf-8"
+
+
+def parser_log_path() -> Path:
+    """Вернуть путь к журналу парсера по текущим настройкам."""
+    return SettingsLoader().get("log_dir") / PARSER_LOG_FILE
 
 
 def setup_logging() -> None:
@@ -43,9 +48,7 @@ def setup_logging() -> None:
         ACTIONS_FORMAT,
         settings.get("log_level"),
     )
-    _to_rotating_file(
-        PARSER_LOGGER, log_dir / PARSER_LOG_FILE, PARSER_FORMAT, logging.DEBUG
-    )
+    _to_rotating_file(PARSER_LOGGER, parser_log_path(), PARSER_FORMAT, logging.DEBUG)
     # Отладочные записи HTTP-библиотеки содержат адрес запроса вместе с ключом API.
     logging.getLogger(HTTP_LIBRARY_LOGGER).setLevel(logging.INFO)
 

@@ -159,6 +159,11 @@ class TestRunUpdate:
             RatesUpdater([coingecko], storage).run_update(sources=("binance",))
         assert coingecko.calls == 0
 
+    def test_errors_are_described_in_one_line(self):
+        result = UpdateResult(3, NOW, ("CoinGecko: down", "ExchangeRate-API: no key"))
+        assert result.describe_errors() == "CoinGecko: down; ExchangeRate-API: no key"
+        assert UpdateResult(6, NOW, ()).describe_errors() == ""
+
     def test_update_result_is_frozen(self):
         result = UpdateResult(0, NOW, ())
         with pytest.raises(AttributeError):

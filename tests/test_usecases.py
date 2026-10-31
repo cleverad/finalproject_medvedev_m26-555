@@ -7,6 +7,7 @@ import pytest
 
 from valutatrade_hub.core import usecases, utils
 from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
     CurrencyNotFoundError,
     InsufficientFundsError,
     InvalidPasswordError,
@@ -24,6 +25,7 @@ from valutatrade_hub.core.models import (
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.logging_config import ACTIONS_LOGGER
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.parser_service.updater import UpdateResult
 
 
 class TestRegister:
@@ -141,14 +143,19 @@ class TestShowPortfolio:
         assert valuation.values["EUR"] == Decimal("214.00")
         assert valuation.total == sum(valuation.values.values())
 
-    def test_stub_rates_until_rates_json_exists(self, workdir):
+    def test_without_rates_json_only_the_base_can_be_valued(self, workdir):
         alice = usecases.register("alice", "1234")
         db = DatabaseManager()
         portfolio = db.get_portfolio(alice)
         portfolio.add_currency("BTC").deposit(1)
         db.save_portfolio(portfolio)
-        valuation = usecases.show_portfolio(alice.user_id)
-        assert valuation.values["BTC"] == Decimal("59337.21")
+        with pytest.raises(RateNotAvailableError, match="BTC→USD"):
+            usecases.show_portfolio(alice.user_id)
+
+    def test_show_portfolio_never_refreshes(self, workdir, offline_refresh):
+        alice = usecases.register("alice", "1234")
+        usecases.show_portfolio(alice.user_id)
+        assert offline_refresh == []
 
     def test_unknown_base_message(self, workdir):
         alice = usecases.register("alice", "1234")
@@ -197,27 +204,56 @@ class TestGetRate:
         monkeypatch.setattr(utils, "utc_now", lambda: edge)
         assert usecases.get_rate("BTC", "USD").updated_at == UPDATED_AT
 
-    def test_stale_rate_is_not_available(self, rates, monkeypatch):
+    def test_fresh_rate_does_not_refresh(self, rates, offline_refresh):
+        usecases.get_rate("BTC", "USD")
+        assert offline_refresh == []
+
+    def test_stale_rate_is_refreshed(self, rates, monkeypatch, offline_refresh):
         ttl = SettingsLoader().get("rates_ttl_seconds")
         later = UPDATED_AT + timedelta(seconds=ttl + 1)
         monkeypatch.setattr(utils, "utc_now", lambda: later)
-        with pytest.raises(RateNotAvailableError, match="BTC→USD"):
-            usecases.get_rate("BTC", "USD")
+        rate = usecases.get_rate("BTC", "USD")
+        assert offline_refresh == [None]
+        assert rate.updated_at == later
+        assert rate.source == STUB_SOURCE
 
-    def test_missing_pair(self, rates):
+    def test_missing_pair_is_refreshed_first(self, rates, offline_refresh):
+        rate = usecases.get_rate("USD", "ETH")
+        assert offline_refresh == [None]
+        assert rate.value == 1 / Decimal(3720)
+
+    def test_pair_missing_after_a_clean_refresh(self, rates, offline_refresh):
         with pytest.raises(RateNotAvailableError) as info:
-            usecases.get_rate("USD", "ETH")
-        assert str(info.value) == "Не удалось получить курс для USD→ETH"
+            usecases.get_rate("USD", "GBP")
+        assert str(info.value) == "Не удалось получить курс для USD→GBP"
+        assert offline_refresh == [None]
+
+    def test_failed_refresh_raises_api_error(self, rates, monkeypatch):
+        def refresh(sources=None):
+            raise ApiRequestError(reason="down")
+
+        monkeypatch.setattr(usecases, "refresh_rates", refresh)
+        with pytest.raises(ApiRequestError, match="down"):
+            usecases.get_rate("USD", "GBP")
+
+    def test_errors_of_a_partial_refresh_are_reported(self, rates, monkeypatch):
+        def refresh(sources=None):
+            return UpdateResult(3, UPDATED_AT, ("ExchangeRate-API: не задан ключ",))
+
+        monkeypatch.setattr(usecases, "refresh_rates", refresh)
+        with pytest.raises(ApiRequestError, match="не задан ключ"):
+            usecases.get_rate("GBP", "USD")
 
     @pytest.mark.parametrize(("from_code", "to_code"), [("ABC", "USD"), ("USD", "btc")])
     def test_unknown_code(self, rates, from_code, to_code):
         with pytest.raises(CurrencyNotFoundError):
             usecases.get_rate(from_code, to_code)
 
-    def test_stub_until_rates_json_exists(self, workdir):
+    def test_missing_rates_json_is_refreshed_first(self, workdir, offline_refresh):
         rate = usecases.get_rate("EUR", "USD")
+        assert offline_refresh == [None]
         assert rate.value == Decimal("1.0786")
-        assert rate.source == STUB_SOURCE
+        assert (workdir / "data" / "rates.json").exists()
 
 
 def stored_wallets(workdir, user_id=1):
@@ -304,16 +340,32 @@ class TestBuy:
     def test_rate_not_available(self, rates):
         alice = usecases.register("alice", "1234")
         with pytest.raises(RateNotAvailableError) as info:
-            usecases.buy(alice.user_id, "ETH", 1)
-        assert str(info.value) == "Не удалось получить курс для ETH→USD"
+            usecases.buy(alice.user_id, "GBP", 1)
+        assert str(info.value) == "Не удалось получить курс для GBP→USD"
 
-    def test_stale_rate_blocks_the_trade(self, rates, monkeypatch):
+    def test_stale_rate_is_refreshed_before_the_trade(
+        self, rates, monkeypatch, offline_refresh
+    ):
         alice = usecases.register("alice", "1234")
         ttl = SettingsLoader().get("rates_ttl_seconds")
         later = UPDATED_AT + timedelta(seconds=ttl + 1)
         monkeypatch.setattr(utils, "utc_now", lambda: later)
-        with pytest.raises(RateNotAvailableError):
+        result = usecases.buy(alice.user_id, "BTC", 0.05)
+        assert offline_refresh == [None]
+        assert result.rate.value == Decimal("59337.21")
+
+    def test_failed_refresh_blocks_the_trade(self, rates, workdir, monkeypatch):
+        alice = usecases.register("alice", "1234")
+        later = UPDATED_AT + timedelta(days=1)
+        monkeypatch.setattr(utils, "utc_now", lambda: later)
+
+        def refresh(sources=None):
+            raise ApiRequestError(reason="down")
+
+        monkeypatch.setattr(usecases, "refresh_rates", refresh)
+        with pytest.raises(ApiRequestError):
             usecases.buy(alice.user_id, "BTC", 0.05)
+        assert stored_wallets(workdir) == {"USD": {"balance": 10000.0}}
 
     def test_unknown_user(self, rates):
         with pytest.raises(UserNotFoundError):
@@ -413,13 +465,18 @@ class TestSell:
         with pytest.raises(CurrencyNotFoundError):
             usecases.sell(alice.user_id, "ABC", 1)
 
-    def test_stale_rate_blocks_the_trade(self, rates, workdir, monkeypatch):
+    def test_failed_refresh_blocks_the_trade(self, rates, workdir, monkeypatch):
         alice = usecases.register("alice", "1234")
         usecases.buy(alice.user_id, "BTC", 0.05)
         ttl = SettingsLoader().get("rates_ttl_seconds")
         later = UPDATED_AT + timedelta(seconds=ttl + 1)
         monkeypatch.setattr(utils, "utc_now", lambda: later)
-        with pytest.raises(RateNotAvailableError):
+
+        def refresh(sources=None):
+            raise ApiRequestError(reason="down")
+
+        monkeypatch.setattr(usecases, "refresh_rates", refresh)
+        with pytest.raises(ApiRequestError):
             usecases.sell(alice.user_id, "BTC", 0.01)
         assert stored_wallets(workdir)["BTC"] == {"balance": 0.05}
 

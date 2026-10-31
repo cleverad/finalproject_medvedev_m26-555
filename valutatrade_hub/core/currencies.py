@@ -13,6 +13,8 @@ from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError
 
 __all__ = [
+    "AMOUNT_DECIMALS",
+    "AMOUNT_STEP",
     "BASE_CURRENCY",
     "CryptoCurrency",
     "Currency",

@@ -6,8 +6,9 @@ import pytest
 
 from valutatrade_hub.cli import interface
 from valutatrade_hub.cli.interface import COMMANDS, Command, Session, parse_options
-from valutatrade_hub.core import utils
+from valutatrade_hub.core import usecases, utils
 from valutatrade_hub.core.currencies import supported_codes
+from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.models import Rate, RatesSnapshot
 from valutatrade_hub.infra.database import DatabaseManager
 
@@ -164,6 +165,10 @@ class TestCommands:
         assert out[-1] == "ИТОГО: 10,000.00 USD"
 
     def test_show_portfolio_base_is_uppercased(self, workdir, capsys):
+        eur_usd = Rate(
+            "EUR", "USD", Decimal("1.07"), datetime(2025, 1, 1, tzinfo=UTC), "x"
+        )
+        DatabaseManager().save_rates(RatesSnapshot({eur_usd.key: eur_usd}))
         out = run_lines(
             [
                 "register --username alice --password 1234",
@@ -312,6 +317,41 @@ class TestCommands:
         assert out == [
             "Курс USD→BTC: 0.00001685 (обновлено: 2025-10-09 00:03:22 UTC)",
             "Обратный курс BTC→USD: 59337.21",
+        ]
+
+    def test_get_rate_refreshes_an_empty_cache(self, workdir, capsys, offline_refresh):
+        out = run_lines(["get-rate --from BTC --to USD"], capsys)
+        assert offline_refresh == [None]
+        assert out.startswith("Курс BTC→USD: 59337.21")
+
+    def test_get_rate_reports_a_failed_refresh(self, workdir, capsys, monkeypatch):
+        def refresh(sources=None):
+            raise ApiRequestError(reason="CoinGecko: сбой сети")
+
+        monkeypatch.setattr(usecases, "refresh_rates", refresh)
+        out = run_lines(["get-rate --from USD --to BTC"], capsys).splitlines()
+        assert out == [
+            "Курс USD→BTC недоступен. Повторите попытку позже.",
+            "Ошибка при обращении к внешнему API: CoinGecko: сбой сети",
+            "Проверьте сеть и ключ API. Подробности в logs/parser.log",
+        ]
+
+    def test_buy_reports_a_failed_refresh(self, workdir, capsys, monkeypatch):
+        def refresh(sources=None):
+            raise ApiRequestError(reason="down")
+
+        monkeypatch.setattr(usecases, "refresh_rates", refresh)
+        out = run_lines(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                "buy --currency BTC --amount 0.01",
+            ],
+            capsys,
+        ).splitlines()
+        assert out[-2:] == [
+            "Ошибка при обращении к внешнему API: down",
+            "Проверьте сеть и ключ API. Подробности в logs/parser.log",
         ]
 
     def test_get_rate_does_not_require_login(self, workdir, capsys):

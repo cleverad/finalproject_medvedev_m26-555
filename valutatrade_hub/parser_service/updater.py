@@ -8,7 +8,6 @@ import logging
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.exceptions import ApiRequestError
@@ -47,6 +46,10 @@ class UpdateResult:
     def ok(self) -> bool:
         """Все источники ответили."""
         return not self.errors
+
+    def describe_errors(self) -> str:
+        """Перечислить ошибки источников одной строкой для сообщения."""
+        return ERRORS_SEPARATOR.join(self.errors)
 
 
 class RatesUpdater:
@@ -89,7 +92,7 @@ class RatesUpdater:
         logger.info(
             "Writing %d rates to %s...",
             len(observed),
-            shown_path(self._storage.rates_file),
+            utils.shown_path(self._storage.rates_file),
         )
         self._storage.append_history(observed)
         self._storage.save_snapshot(observed, now)
@@ -124,11 +127,3 @@ def refresh_rates(sources: Collection[str] | None = None) -> UpdateResult:
     storage = RatesStorage(DatabaseManager(), config)
     clients = (CoinGeckoClient(config), ExchangeRateApiClient(config))
     return RatesUpdater(clients, storage).run_update(sources)
-
-
-def shown_path(path: Path) -> Path:
-    """Показать путь относительно текущей папки, если он внутри неё."""
-    try:
-        return path.relative_to(Path.cwd())
-    except ValueError:
-        return path

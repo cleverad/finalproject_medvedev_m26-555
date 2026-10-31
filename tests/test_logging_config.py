@@ -61,9 +61,8 @@ class TestSetupLogging:
         logger = logging.getLogger(PARSER_LOGGER)
         assert logger.level == logging.DEBUG
         (handler,) = file_handlers(PARSER_LOGGER)
-        assert handler.baseFilename == str(
-            SettingsLoader().get("log_dir") / logging_config.PARSER_LOG_FILE
-        )
+        assert handler.baseFilename == str(logging_config.parser_log_path())
+        assert logging_config.parser_log_path() == workdir / "logs" / "parser.log"
         record = logging.LogRecord(
             PARSER_LOGGER, logging.DEBUG, __file__, 1, "GET x -> 200", None, None
         )

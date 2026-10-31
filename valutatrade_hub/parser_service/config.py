@@ -19,7 +19,7 @@ from valutatrade_hub.core.currencies import (
 )
 from valutatrade_hub.infra.settings import SettingsLoader
 
-__all__ = ["ParserConfig"]
+__all__ = ["API_KEY_ENV", "ParserConfig"]
 
 API_KEY_ENV = "EXCHANGERATE_API_KEY"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"

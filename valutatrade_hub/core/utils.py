@@ -8,6 +8,7 @@ import hmac
 import secrets
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 __all__ = [
     "MIN_PASSWORD_LENGTH",
@@ -24,6 +25,7 @@ __all__ = [
     "parse_amount",
     "parse_utc",
     "quote",
+    "shown_path",
     "strip_password",
     "to_decimal",
     "trim_zeros",
@@ -249,3 +251,11 @@ def format_rate(value: Decimal) -> str:
 def quote(text: object) -> str:
     """Взять значение в одинарные кавычки для записи журнала: 'alice'."""
     return f"{QUOTE}{text}{QUOTE}"
+
+
+def shown_path(path: Path) -> Path:
+    """Показать путь относительно текущей папки, если он внутри неё."""
+    try:
+        return path.relative_to(Path.cwd())
+    except ValueError:
+        return path

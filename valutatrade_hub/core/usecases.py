@@ -14,6 +14,7 @@ from valutatrade_hub.core.currencies import (
 )
 from valutatrade_hub.core.decorators import log_action
 from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
     CurrencyNotFoundError,
     InvalidPasswordError,
     RateNotAvailableError,
@@ -34,6 +35,7 @@ from valutatrade_hub.core.models import (
 )
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.parser_service.updater import refresh_rates
 
 MSG_UNKNOWN_BASE = "Неизвестная базовая валюта '{code}'"
 MSG_BASE_CURRENCY_TRADE = "Нельзя торговать базовой валютой {code}"
@@ -87,7 +89,7 @@ def show_portfolio(
     """Оценить портфель пользователя в базовой валюте по снимку rates.json.
 
     Срок годности курсов здесь не проверяется: показ портфеля не сделка.
-    Пока rates.json нет, берётся заглушка EXCHANGE_RATES.
+    Пока rates.json нет, оценить можно только базовую валюту.
 
     Raises:
         UserNotFoundError: если пользователя с таким id нет.
@@ -100,7 +102,7 @@ def show_portfolio(
         get_currency(base_currency)
     except CurrencyNotFoundError:
         raise ValueError(MSG_UNKNOWN_BASE.format(code=base_currency)) from None
-    return portfolio.get_valuation(base_currency, db.get_rates())
+    return portfolio.get_valuation(base_currency, _snapshot(db))
 
 
 def _user_portfolio(db: DatabaseManager, user_id: int) -> tuple[User, Portfolio]:
@@ -117,23 +119,45 @@ def _user_portfolio(db: DatabaseManager, user_id: int) -> tuple[User, Portfolio]
 
 
 def get_rate(from_code: str, to_code: str) -> Rate:
-    """Вернуть свежий курс пары по снимку rates.json.
+    """Вернуть свежий курс пары, при устаревшем снимке обновить его через парсер.
 
-    Курс старше rates_ttl_seconds считается отсутствующим. Пока rates.json нет,
-    берётся заглушка EXCHANGE_RATES.
+    Курс старше rates_ttl_seconds или отсутствующий в снимке считается
+    устаревшим: тогда запускается обновление и снимок перечитывается.
 
     Raises:
         CurrencyNotFoundError: если один из кодов не в реестре.
-        RateNotAvailableError: если курса нет в снимке или он устарел.
+        ApiRequestError: если обновление не удалось, или курса нет и после
+            него, а источники сообщали об ошибках.
+        RateNotAvailableError: если курса нет и после удачного обновления.
     """
     get_currency(from_code)
     get_currency(to_code)
-    now = utils.utc_now()
-    rates = DatabaseManager().get_rates() or RatesSnapshot.stub(now)
-    rate = rates.get_rate(from_code, to_code)
-    if not rate.is_fresh(SettingsLoader().get("rates_ttl_seconds"), now):
-        raise RateNotAvailableError(from_code=from_code, to_code=to_code)
-    return rate
+    db = DatabaseManager()
+    rate = _fresh_rate(db, from_code, to_code)
+    if rate is not None:
+        return rate
+    result = refresh_rates()
+    rate = _fresh_rate(db, from_code, to_code)
+    if rate is not None:
+        return rate
+    if result.errors:
+        raise ApiRequestError(reason=result.describe_errors())
+    raise RateNotAvailableError(from_code=from_code, to_code=to_code)
+
+
+def _snapshot(db: DatabaseManager) -> RatesSnapshot:
+    """Вернуть снимок rates.json, пустой, если файла ещё нет."""
+    return db.get_rates() or RatesSnapshot({})
+
+
+def _fresh_rate(db: DatabaseManager, from_code: str, to_code: str) -> Rate | None:
+    """Вернуть курс из снимка, если он есть и не старше TTL, иначе None."""
+    try:
+        rate = _snapshot(db).get_rate(from_code, to_code)
+    except RateNotAvailableError:
+        return None
+    ttl = SettingsLoader().get("rates_ttl_seconds")
+    return rate if rate.is_fresh(ttl, utils.utc_now()) else None
 
 
 @log_action(BUY_ACTION)

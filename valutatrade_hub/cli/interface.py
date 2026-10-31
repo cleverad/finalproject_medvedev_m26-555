@@ -14,6 +14,7 @@ from valutatrade_hub.core import usecases, utils
 from valutatrade_hub.core.currencies import BASE_CURRENCY, supported_codes
 from valutatrade_hub.core.exceptions import CurrencyNotFoundError, ValutaTradeError
 from valutatrade_hub.core.models import TradeResult, User
+from valutatrade_hub.infra.logging_config import setup_logging
 
 __all__ = ["COMMANDS", "Command", "Session", "execute", "parse_options", "run"]
 
@@ -351,6 +352,7 @@ def execute(line: str, session: Session) -> None:
 
 def run() -> None:
     """Запустить цикл чтения и выполнения команд до exit или конца ввода."""
+    setup_logging()
     print(MSG_WELCOME)
     session = Session()
     while session.running:

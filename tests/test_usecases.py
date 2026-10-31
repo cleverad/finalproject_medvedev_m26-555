@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -21,6 +22,7 @@ from valutatrade_hub.core.models import (
     RatesSnapshot,
 )
 from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.logging_config import ACTIONS_LOGGER
 from valutatrade_hub.infra.settings import SettingsLoader
 
 
@@ -424,3 +426,39 @@ class TestSell:
     def test_unknown_user(self, rates):
         with pytest.raises(UserNotFoundError):
             usecases.sell(42, "BTC", 0.05)
+
+
+class TestActionsLog:
+    @pytest.fixture
+    def actions(self, caplog):
+        caplog.set_level(logging.INFO, logger=ACTIONS_LOGGER)
+        return caplog
+
+    def test_buy_writes_a_record(self, rates, actions):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        (record,) = actions.records
+        assert record.getMessage() == (
+            "BUY user='alice' currency='BTC' amount=0.0500 rate=59300.00 base='USD' "
+            "result=OK"
+        )
+
+    def test_sell_writes_a_record(self, rates, actions):
+        alice = usecases.register("alice", "1234")
+        usecases.buy(alice.user_id, "BTC", 0.05)
+        usecases.sell(alice.user_id, "BTC", 0.01)
+        assert actions.records[-1].getMessage() == (
+            "SELL user='alice' currency='BTC' amount=0.0100 rate=59300.00 base='USD' "
+            "result=OK"
+        )
+
+    def test_failed_trade_writes_an_error_and_raises(self, rates, actions):
+        alice = usecases.register("alice", "1234")
+        with pytest.raises(InsufficientFundsError):
+            usecases.buy(alice.user_id, "BTC", 1)
+        (record,) = actions.records
+        assert record.levelname == "ERROR"
+        assert record.getMessage().startswith(
+            "BUY user=1 currency='BTC' amount=1 result=ERROR "
+            "error_type=InsufficientFundsError error_message='Недостаточно средств"
+        )

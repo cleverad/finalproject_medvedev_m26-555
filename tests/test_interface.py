@@ -341,6 +341,21 @@ class TestRun:
         out = capsys.readouterr().out
         assert "зарегистрирован" in out
 
+    def test_run_sets_up_logging(self, workdir, capsys, monkeypatch):
+        lines = iter(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                "buy --currency BTC --amount 0.01",
+                "exit",
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda prompt: next(lines))
+        interface.run()
+        text = (workdir / "logs" / "actions.log").read_text()
+        assert " BUY user='alice' currency='BTC' amount=0.0100 " in text
+        assert text.endswith("result=OK\n")
+
     def test_eof_ends_loop(self, workdir, capsys, monkeypatch):
         def raise_eof(prompt):
             raise EOFError

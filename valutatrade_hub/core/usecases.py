@@ -12,6 +12,7 @@ from valutatrade_hub.core.currencies import (
     Currency,
     get_currency,
 )
+from valutatrade_hub.core.decorators import log_action
 from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
     InvalidPasswordError,
@@ -135,6 +136,7 @@ def get_rate(from_code: str, to_code: str) -> Rate:
     return rate
 
 
+@log_action(BUY_ACTION)
 def buy(user_id: int, currency_code: str, amount: object) -> TradeResult:
     """Купить валюту за базовую по свежему курсу.
 
@@ -164,6 +166,7 @@ def buy(user_id: int, currency_code: str, amount: object) -> TradeResult:
     )
 
 
+@log_action(SELL_ACTION)
 def sell(user_id: int, currency_code: str, amount: object) -> TradeResult:
     """Продать валюту за базовую по свежему курсу.
 

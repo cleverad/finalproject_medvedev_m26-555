@@ -23,6 +23,7 @@ __all__ = [
     "normalize_username",
     "parse_amount",
     "parse_utc",
+    "quote",
     "strip_password",
     "to_decimal",
     "trim_zeros",
@@ -37,6 +38,7 @@ PBKDF2_ITERATIONS = 100_000
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC"
 DECIMAL_POINT = "."
+QUOTE = "'"
 RATE_MAX_DECIMALS = 8
 RATE_MIN_DECIMALS = 2
 
@@ -242,3 +244,8 @@ def format_rate(value: Decimal) -> str:
     Хвостовые нули убираются: 59337.21, 3720.00, 0.01016, 0.00001685.
     """
     return trim_zeros(f"{value:.{RATE_MAX_DECIMALS}f}", RATE_MIN_DECIMALS)
+
+
+def quote(text: object) -> str:
+    """Взять значение в одинарные кавычки для записи журнала: 'alice'."""
+    return f"{QUOTE}{text}{QUOTE}"

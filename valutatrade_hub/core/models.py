@@ -591,3 +591,22 @@ class TradeResult:
     base_before: Decimal
     base_after: Decimal
     value: Decimal
+
+    def get_log_fields(self, verbose: bool = False) -> dict[str, str]:
+        """Вернуть поля записи журнала: user, currency, amount, rate, base.
+
+        С verbose добавляются балансы обоих кошельков до и после сделки.
+        """
+        fields = {
+            "user": utils.quote(self.username),
+            "currency": utils.quote(self.currency.code),
+            "amount": self.currency.format_amount(self.amount),
+            "rate": utils.format_rate(self.rate.value),
+            "base": utils.quote(self.base.code),
+        }
+        if verbose:
+            fields["before"] = self.currency.format_amount(self.before)
+            fields["after"] = self.currency.format_amount(self.after)
+            fields["base_before"] = self.base.format_amount(self.base_before)
+            fields["base_after"] = self.base.format_amount(self.base_after)
+        return fields
